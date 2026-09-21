@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases & runtime storage
+*.db
+*.db-shm
+*.db-wal
+data/index/*.db
+!data/index/.gitkeep
+data/storage/*
+!data/storage/.gitkeep
+data/.secret
+data/.admin_bootstrap
+
+# Environment variables
+.env
+.env.*
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.log
