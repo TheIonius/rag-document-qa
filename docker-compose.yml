@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  rag-document-qa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cortex-rag-engine
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - CORTEX_SECRET_KEY=${CORTEX_SECRET_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      - RATE_LIMIT_PER_MINUTE=120
+      - ENABLE_PROMPT_INJECTION_DEFENSE=true
+    volumes:
+      - rag_data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  rag_data:
+    driver: local
