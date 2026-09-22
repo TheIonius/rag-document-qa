@@ -22,13 +22,15 @@ def list_workspaces(user: dict = Depends(get_current_user)):
     with get_db() as conn:
         if user.get("is_superuser"):
             rows = conn.execute("""
-                SELECT w.id, w.organization_id, w.name, w.slug, w.created_at, 'owner' as role
+                SELECT w.id, w.organization_id, w.name, w.slug, w.created_at, 'owner' as role,
+                       (SELECT COUNT(*) FROM workspace_memberships WHERE workspace_id = w.id) as member_count
                 FROM workspaces w
                 ORDER BY w.created_at ASC
             """).fetchall()
         else:
             rows = conn.execute("""
-                SELECT w.id, w.organization_id, w.name, w.slug, w.created_at, m.role
+                SELECT w.id, w.organization_id, w.name, w.slug, w.created_at, m.role,
+                       (SELECT COUNT(*) FROM workspace_memberships WHERE workspace_id = w.id) as member_count
                 FROM workspaces w
                 JOIN workspace_memberships m ON w.id = m.workspace_id
                 WHERE m.user_id = ?
@@ -36,7 +38,8 @@ def list_workspaces(user: dict = Depends(get_current_user)):
             """, (user["id"],)).fetchall()
             if not any(r["id"] == "ws_default" for r in rows):
                 demo_ws = conn.execute("""
-                    SELECT id, organization_id, name || ' (Demo Sandbox)' as name, slug, created_at, 'viewer' as role
+                    SELECT id, organization_id, name || ' (Demo Sandbox)' as name, slug, created_at, 'viewer' as role,
+                           (SELECT COUNT(*) FROM workspace_memberships WHERE workspace_id = 'ws_default') as member_count
                     FROM workspaces WHERE id = 'ws_default'
                 """).fetchone()
                 if demo_ws:
@@ -86,7 +89,8 @@ def create_workspace(req: WorkspaceCreateRequest, user: dict = Depends(get_curre
         name=req.name.strip(),
         slug=slug,
         created_at=now,
-        role="owner"
+        role="owner",
+        member_count=1
     )
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
@@ -104,8 +108,14 @@ def get_workspace(workspace_id: str, user: dict = Depends(get_current_user)):
             if not mem:
                 raise HTTPException(status_code=403, detail="Access denied to this workspace.")
 
+        m_count = conn.execute(
+            "SELECT COUNT(*) as cnt FROM workspace_memberships WHERE workspace_id = ?",
+            (workspace_id,)
+        ).fetchone()["cnt"]
+
         data = dict(row)
         data["role"] = "owner" if user.get("is_superuser") else mem["role"]
+        data["member_count"] = m_count
         return WorkspaceResponse.model_validate(data)
 
 @router.get("/{workspace_id}/members", response_model=List[WorkspaceMemberResponse])

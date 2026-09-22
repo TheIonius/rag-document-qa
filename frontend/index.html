@@ -57,7 +57,7 @@
             <circle cx="12" cy="7" r="4"/>
           </svg>
           <span id="user-display-name">Sign In</span>
-          <span id="user-role-badge" class="user-role-badge" style="display:none;">Owner</span>
+          <span id="user-role-badge" class="user-role-badge" style="display:none;">Member</span>
         </button>
 
         <button type="button" id="btn-open-audit-log" class="btn btn-ghost" title="Review execution audit trail and historical query ledger">
@@ -208,34 +208,19 @@
               </div>
               <h2 class="empty-heading">Enterprise Document Intelligence</h2>
               <p class="empty-sub">
-                Synthesize authoritative answers across security compliance policies, employee benefits handbooks,
-                and REST API specifications with verifiable line-level citations.
+                Ask open-ended research questions across security compliance policies, employee benefits handbooks,
+                and technical specifications with verifiable line-level citations.
               </p>
             </div>
 
-            <!-- Curated Starter Inquiries -->
-            <div class="starter-inquiries-wrap">
-              <span id="starters-label" class="starters-label">Suggested Research Inquiries:</span>
+            <!-- Dynamic Starter Inquiries & Scope -->
+            <div id="starters-wrap" class="starter-inquiries-wrap">
+              <div class="starters-header-row">
+                <span id="starters-label" class="starters-label">Suggested Research Inquiries:</span>
+                <span id="starters-hint" class="starters-hint">Derived from active workspace documentation</span>
+              </div>
               <div id="starters-grid" class="starters-grid">
-                <button type="button" class="starter-card" data-query="What are the MFA requirements and prohibited methods for production?" onclick="executeStarterInquiry(this)">
-                  <div class="starter-tag">Security &amp; Infrastructure</div>
-                  <div class="starter-title">Production MFA Policy &amp; Approved Hardware Protocols</div>
-                </button>
-
-                <button type="button" class="starter-card" data-query="What is the 401(k) company matching formula and vesting schedule?" onclick="executeStarterInquiry(this)">
-                  <div class="starter-tag">People Operations</div>
-                  <div class="starter-title">401(k) Company Matching Formula &amp; Vesting Schedule</div>
-                </button>
-
-                <button type="button" class="starter-card" data-query="What are the API rate limits and webhook retry backoff schedule?" onclick="executeStarterInquiry(this)">
-                  <div class="starter-tag">API &amp; System Architecture</div>
-                  <div class="starter-title">API Rate Limits, HTTP 429 Codes &amp; Webhook Retries</div>
-                </button>
-
-                <button type="button" class="starter-card" data-query="How many weeks of paid parental leave are offered to caregivers?" onclick="executeStarterInquiry(this)">
-                  <div class="starter-tag">People Operations</div>
-                  <div class="starter-title">Paid Caregiver &amp; Parental Leave Eligibility</div>
-                </button>
+                <!-- Dynamically populated via app.js -->
               </div>
             </div>
           </div>
@@ -258,7 +243,7 @@
                 type="text" 
                 id="query-input" 
                 class="inquiry-input" 
-                placeholder="Ask an enterprise inquiry or follow-up question..." 
+                placeholder="Ask any question about your indexed documentation in your own words..." 
                 autocomplete="off"
                 required
               >
@@ -272,7 +257,7 @@
             </button>
           </form>
           <div class="inquiry-dock-meta">
-            <span>Press <kbd>Enter</kbd> to submit &bull; <kbd>/</kbd> to focus &bull; Click citation footnotes <kbd>[1]</kbd> to view source side-by-side</span>
+            <span>Press <kbd>Enter</kbd> to submit freeform query &bull; <kbd>/</kbd> to focus &bull; Click citation footnotes <kbd>[1]</kbd> to view source side-by-side</span>
           </div>
         </div>
       </main>
@@ -539,7 +524,7 @@
                 <div class="profile-details">
                   <div id="profile-name" class="profile-name">Enterprise Administrator</div>
                   <div id="profile-email" class="profile-email">admin@enterprise.local</div>
-                  <div id="profile-role" class="profile-role-badge">Owner</div>
+                  <div id="profile-role" class="profile-role-badge">Member</div>
                 </div>
               </div>
               <button type="button" class="btn btn-secondary btn-block" onclick="handleSignOut()">Sign Out</button>
@@ -587,7 +572,6 @@
           <div>
             <span class="sheet-tag">Multi-Tenant Collaboration</span>
             <h2 id="members-modal-title" class="sheet-title">Workspace Team & Access Control</h2>
-            <p id="members-modal-subtitle" class="modal-subtitle">Manage collaborative permissions and teammate roles for this tenant partition.</p>
           </div>
           <button type="button" class="modal-close-btn" onclick="closeMembersModal()" title="Close (Esc)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -598,32 +582,41 @@
         </div>
 
         <div class="members-modal-body">
+          <p class="members-intro-desc">Manage collaborative access, invite teammates by email, and configure role privileges for this workspace partition.</p>
           <div id="members-alert-banner" class="members-alert-banner" style="display:none;"></div>
 
           <!-- Invite Form (Accessible for Owner / Admin) -->
-          <div id="members-invite-section" class="members-invite-section">
-            <h3 class="members-section-heading">Invite Colleague to Workspace</h3>
+          <div id="members-invite-section" class="members-invite-card">
+            <div class="members-card-header">
+              <h3 class="members-card-title">Invite Colleague to Workspace</h3>
+              <span class="members-card-hint">Colleagues must have a registered account. They gain access immediately upon addition.</span>
+            </div>
             <form id="members-invite-form" onsubmit="handleAddWorkspaceMember(event)">
               <div class="members-invite-row">
-                <div class="form-group form-group-flex">
+                <div class="form-group members-input-email">
                   <label for="invite-member-email" class="form-label">Email Address</label>
                   <input type="email" id="invite-member-email" class="form-input" placeholder="colleague@enterprise.com" required autocomplete="off">
                 </div>
-                <div class="form-group form-group-role">
+                <div class="form-group members-input-role">
                   <label for="invite-member-role" class="form-label">Access Role</label>
-                  <select id="invite-member-role" class="form-input form-select">
+                  <select id="invite-member-role" class="form-input form-select-custom">
                     <option value="member" selected>Member (Query & Upload)</option>
                     <option value="admin">Admin (Manage & Invite)</option>
                     <option value="viewer">Viewer (Read-Only)</option>
                   </select>
                 </div>
-                <div class="form-group form-group-btn">
-                  <button type="submit" id="btn-submit-invite-member" class="btn btn-primary btn-sm">
+                <div class="form-group members-input-btn">
+                  <button type="submit" id="btn-submit-invite-member" class="btn btn-primary members-submit-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                      <circle cx="9" cy="7" r="4"/>
+                      <line x1="19" y1="8" x2="19" y2="14"/>
+                      <line x1="22" y1="11" x2="16" y2="11"/>
+                    </svg>
                     <span>Add Member</span>
                   </button>
                 </div>
               </div>
-              <span class="field-hint">Colleagues must have a registered account. They gain access immediately upon addition.</span>
             </form>
           </div>
 
@@ -637,6 +630,54 @@
               <!-- Populated dynamically via app.js -->
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Workspace Modal -->
+    <div id="create-workspace-modal" class="modal-backdrop" onclick="closeCreateWorkspaceModalOnBackdrop(event)" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="create-ws-title">
+      <div class="create-ws-dialog" onclick="event.stopPropagation()">
+        <div class="modal-sheet-header">
+          <div>
+            <span class="sheet-tag">Tenant Partition</span>
+            <h2 id="create-ws-title" class="sheet-title">Create New Workspace</h2>
+          </div>
+          <button type="button" class="modal-close-btn" onclick="closeCreateWorkspaceModal()" title="Close (Esc)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="create-ws-body">
+          <p class="create-ws-intro">Create an isolated workspace partition for your team, project, or department with dedicated documents, members, and research threads.</p>
+          <div id="create-ws-alert" class="members-alert-banner" style="display:none;"></div>
+
+          <form id="create-ws-form" onsubmit="handleCreateWorkspaceSubmit(event)">
+            <div class="form-group" style="margin-bottom: var(--space-md);">
+              <label for="create-ws-name" class="form-label">Workspace Name</label>
+              <input type="text" id="create-ws-name" class="form-input" placeholder="e.g. Legal Operations, Security Audit, Engineering" required autocomplete="off">
+              <span class="field-hint">A clear name for your team or investigation scope.</span>
+            </div>
+
+            <div class="form-group" style="margin-bottom: var(--space-lg);">
+              <label for="create-ws-slug" class="form-label">Workspace Slug (Optional)</label>
+              <input type="text" id="create-ws-slug" class="form-input" placeholder="e.g. legal-ops, security-audit" autocomplete="off">
+              <span class="field-hint">Unique identifier used in references. Leave blank to auto-generate.</span>
+            </div>
+
+            <div class="create-ws-footer">
+              <button type="button" class="btn btn-secondary" onclick="closeCreateWorkspaceModal()">Cancel</button>
+              <button type="submit" id="btn-submit-create-ws" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <span>Create Workspace</span>
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

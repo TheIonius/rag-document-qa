@@ -473,6 +473,10 @@ def test_workspace_members_collaboration_lifecycle(client):
     assert mem_data["role"] == "member"
     member_id = mem_data["id"]
 
+    # Verify member_count in workspace details
+    ws_detail = client.get(f"/api/v1/workspaces/{ws_id}", headers=owner_headers).json()
+    assert ws_detail["member_count"] == 2
+
     # 4. Teammate can now access workspace documents and members list
     members_res = client.get(f"/api/v1/workspaces/{ws_id}/members", headers=teammate_headers)
     assert members_res.status_code == 200
@@ -484,6 +488,10 @@ def test_workspace_members_collaboration_lifecycle(client):
     # 5. Owner removes Teammate
     del_res = client.delete(f"/api/v1/workspaces/{ws_id}/members/{member_id}", headers=owner_headers)
     assert del_res.status_code == 200
+
+    # Verify member_count reverts to 1 after removal
+    ws_after_del = client.get(f"/api/v1/workspaces/{ws_id}", headers=owner_headers).json()
+    assert ws_after_del["member_count"] == 1
 
     # 6. Teammate is now denied access (403)
     denied_res = client.get(f"/api/v1/workspaces/{ws_id}/members", headers=teammate_headers)

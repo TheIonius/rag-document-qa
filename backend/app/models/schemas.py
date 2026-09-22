@@ -261,6 +261,7 @@ class WorkspaceResponse(BaseModel):
     slug: str
     created_at: str
     role: Optional[str] = None
+    member_count: int = 1
 
 class WorkspaceCreateRequest(BaseModel):
     name: str

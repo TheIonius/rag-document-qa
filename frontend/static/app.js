@@ -101,6 +101,7 @@ function setupEventListeners() {
       closeCompareModal();
       closeAuthModal();
       closeMembersModal();
+      closeCreateWorkspaceModal();
     }
   });
 
@@ -253,9 +254,41 @@ async function checkAuthStatus() {
   updateUserAuthUI();
 }
 
+let userWorkspacesList = [];
+
+function determineUserRoleLabel() {
+  if (!currentUser) return "";
+  if (currentUser.is_superuser) return "Superuser";
+  // The account shouldn't be automatically labeled as owner,
+  // only if they add or create a workspace and add members into it.
+  const ownsWorkspaceWithMembers = (userWorkspacesList || []).some(w => {
+    return w.role === "owner" && (w.member_count || 1) > 1;
+  });
+  return ownsWorkspaceWithMembers ? "Owner" : "Member";
+}
+
+function updateUserRoleBadge() {
+  const userRoleBadge = document.getElementById("user-role-badge");
+  const pRole = document.getElementById("profile-role");
+  if (!currentUser) {
+    if (userRoleBadge) userRoleBadge.style.display = "none";
+    return;
+  }
+  const roleLabel = determineUserRoleLabel();
+  if (userRoleBadge) {
+    userRoleBadge.style.display = "inline-block";
+    userRoleBadge.textContent = roleLabel;
+    userRoleBadge.className = `user-role-badge ${roleLabel.toLowerCase()}`;
+  }
+  if (pRole) {
+    pRole.textContent = currentUser.is_superuser
+      ? "Enterprise Superuser"
+      : (roleLabel === "Owner" ? "Workspace Owner" : "Workspace Member");
+  }
+}
+
 function updateUserAuthUI() {
   const displayBtn = document.getElementById("user-display-name");
-  const userRoleBadge = document.getElementById("user-role-badge");
   const profileSection = document.getElementById("user-profile-section");
   const authForm = document.getElementById("auth-form");
   const authTabsRow = document.getElementById("auth-tabs-row");
@@ -265,10 +298,7 @@ function updateUserAuthUI() {
 
   if (currentUser) {
     if (displayBtn) displayBtn.textContent = currentUser.full_name || currentUser.email;
-    if (userRoleBadge) {
-      userRoleBadge.style.display = "inline-block";
-      userRoleBadge.textContent = currentUser.is_superuser ? "Superuser" : "Owner";
-    }
+    updateUserRoleBadge();
     if (profileSection) profileSection.style.display = "block";
     if (authForm) authForm.style.display = "none";
     if (authTabsRow) authTabsRow.style.display = "none";
@@ -286,12 +316,10 @@ function updateUserAuthUI() {
 
     const pName = document.getElementById("profile-name");
     const pEmail = document.getElementById("profile-email");
-    const pRole = document.getElementById("profile-role");
     const pAvatar = document.getElementById("profile-avatar");
 
     if (pName) pName.textContent = currentUser.full_name;
     if (pEmail) pEmail.textContent = currentUser.email;
-    if (pRole) pRole.textContent = currentUser.is_superuser ? "Superuser / Owner" : "Workspace Member";
     if (pAvatar) {
       const initials = currentUser.full_name
         ? currentUser.full_name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
@@ -300,6 +328,7 @@ function updateUserAuthUI() {
     }
   } else {
     if (displayBtn) displayBtn.textContent = "Sign In";
+    const userRoleBadge = document.getElementById("user-role-badge");
     if (userRoleBadge) userRoleBadge.style.display = "none";
     if (profileSection) profileSection.style.display = "none";
     if (authForm) authForm.style.display = "block";
@@ -325,10 +354,12 @@ async function loadWorkspaces() {
   if (!selector) return;
 
   if (!currentUser) {
+    userWorkspacesList = [];
     selector.innerHTML = `
       <option value="ws_default">Demo Sandbox (Shared)</option>
       <option value="__auth_teaser__" disabled>+ Private Tenant Workspace (Sign in to unlock)</option>
     `;
+    updateUserRoleBadge();
     return;
   }
 
@@ -336,6 +367,8 @@ async function loadWorkspaces() {
     const res = await apiFetch("/api/v1/workspaces");
     if (!res.ok) return;
     const workspaces = await res.json();
+    userWorkspacesList = workspaces;
+    updateUserRoleBadge();
 
     if (workspaces.length > 0) {
       // Prioritize user's private tenant workspace over shared demo sandbox
@@ -370,16 +403,16 @@ async function loadWorkspaces() {
 
 function changeActiveWorkspace(wsId) {
   if (wsId === "__create_new__") {
-    const name = prompt("Enter name for new tenant workspace (e.g. Legal Ops, Engineering):");
-    if (name && name.trim()) {
-      createNewWorkspace(name.trim());
-    } else {
-      loadWorkspaces();
+    const sel = document.getElementById("workspace-select");
+    if (sel && currentWorkspaceId) {
+      sel.value = currentWorkspaceId;
     }
+    openCreateWorkspaceModal();
     return;
   }
   currentWorkspaceId = wsId;
   localStorage.setItem("cortex_workspace_id", wsId);
+  updateUserRoleBadge();
   const btnManageMembers = document.getElementById("btn-manage-members");
   if (btnManageMembers) {
     if (currentUser && wsId && wsId !== "ws_default") {
@@ -395,25 +428,87 @@ function changeActiveWorkspace(wsId) {
   updateHistoryBadge();
 }
 
-async function createNewWorkspace(name) {
+function openCreateWorkspaceModal() {
+  const modal = document.getElementById("create-workspace-modal");
+  if (!modal) return;
+  const nameInput = document.getElementById("create-ws-name");
+  const slugInput = document.getElementById("create-ws-slug");
+  const alertBanner = document.getElementById("create-ws-alert");
+  if (nameInput) nameInput.value = "";
+  if (slugInput) slugInput.value = "";
+  if (alertBanner) {
+    alertBanner.style.display = "none";
+    alertBanner.textContent = "";
+  }
+  modal.style.display = "flex";
+  setTimeout(() => {
+    if (nameInput) nameInput.focus();
+  }, 60);
+}
+
+function closeCreateWorkspaceModal() {
+  const modal = document.getElementById("create-workspace-modal");
+  if (modal) modal.style.display = "none";
+  const sel = document.getElementById("workspace-select");
+  if (sel && currentWorkspaceId) {
+    sel.value = currentWorkspaceId;
+  }
+}
+
+function closeCreateWorkspaceModalOnBackdrop(e) {
+  if (e.target.id === "create-workspace-modal") {
+    closeCreateWorkspaceModal();
+  }
+}
+
+async function handleCreateWorkspaceSubmit(e) {
+  e.preventDefault();
+  const nameInput = document.getElementById("create-ws-name");
+  const slugInput = document.getElementById("create-ws-slug");
+  const alertBanner = document.getElementById("create-ws-alert");
+  const submitBtn = document.getElementById("btn-submit-create-ws");
+
+  const name = nameInput ? nameInput.value.trim() : "";
+  const slug = slugInput ? slugInput.value.trim() : "";
+
+  if (!name) return;
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.classList.add("loading");
+  }
+  if (alertBanner) alertBanner.style.display = "none";
+
   try {
+    const payload = { name };
+    if (slug) payload.slug = slug;
     const res = await apiFetch("/api/v1/workspaces", {
       method: "POST",
-      body: JSON.stringify({ name })
+      body: JSON.stringify(payload)
     });
     if (!res.ok) {
       const err = await res.json();
-      alert(err.detail || "Failed to create workspace");
-      return;
+      throw new Error(err.detail || "Failed to create workspace");
     }
     const ws = await res.json();
     currentWorkspaceId = ws.id;
     localStorage.setItem("cortex_workspace_id", ws.id);
+    closeCreateWorkspaceModal();
     await loadWorkspaces();
+    startNewInvestigation();
     loadDocuments();
     loadThreads();
-  } catch (e) {
-    alert("Error creating workspace: " + e.message);
+  } catch (err) {
+    if (alertBanner) {
+      alertBanner.className = "members-alert-banner error";
+      alertBanner.textContent = err.message || "Failed to create workspace";
+      alertBanner.style.display = "block";
+    }
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("loading");
+    }
   }
 }
 
@@ -594,7 +689,9 @@ async function handleAddWorkspaceMember(e) {
 
   if (submitBtn) {
     submitBtn.disabled = true;
-    submitBtn.textContent = "Adding...";
+    const btnSpan = submitBtn.querySelector("span");
+    if (btnSpan) btnSpan.textContent = "Adding...";
+    else submitBtn.textContent = "Adding...";
   }
 
   try {
@@ -620,6 +717,7 @@ async function handleAddWorkspaceMember(e) {
     }
     emailInput.value = "";
     await loadWorkspaceMembers();
+    await loadWorkspaces();
 
   } catch (err) {
     if (alertBanner) {
@@ -630,7 +728,9 @@ async function handleAddWorkspaceMember(e) {
   } finally {
     if (submitBtn) {
       submitBtn.disabled = false;
-      submitBtn.textContent = "Add Member";
+      const btnSpan = submitBtn.querySelector("span");
+      if (btnSpan) btnSpan.textContent = "Add Member";
+      else submitBtn.textContent = "Add Member";
     }
   }
 }
@@ -656,6 +756,7 @@ async function handleRemoveWorkspaceMember(memberId, memberName) {
       alertBanner.style.display = "block";
     }
     await loadWorkspaceMembers();
+    await loadWorkspaces();
 
   } catch (err) {
     if (alertBanner) {
@@ -951,30 +1052,32 @@ async function loadDocuments() {
     // Render Collections in sidebar
     if (container) {
       if (allDocuments.length === 0) {
-        container.innerHTML = `<div class="empty-threads-notice">No documents indexed yet.</div>`;
-        return;
-      }
-
-      container.innerHTML = Object.keys(collectionsMap).map(colName => {
-        const docs = collectionsMap[colName];
-        return `
-          <div class="collection-group">
-            <div class="collection-group-title">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-              </svg>
-              <span>${escapeHtml(colName)}</span>
-            </div>
-            ${docs.map(d => `
-              <div class="collection-doc-item" onclick="openSplitReader('${d.id}', null, null)" title="${escapeHtml(d.title)} (Click to view full text in reader)">
-                <span class="collection-doc-name">${escapeHtml(d.title)}</span>
-                <span class="collection-doc-chunks">${d.chunk_count}p</span>
+        container.innerHTML = `<div class="empty-threads-notice">No documents indexed in this workspace yet.</div>`;
+      } else {
+        container.innerHTML = Object.keys(collectionsMap).map(colName => {
+          const docs = collectionsMap[colName];
+          return `
+            <div class="collection-group">
+              <div class="collection-group-title">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>${escapeHtml(colName)}</span>
               </div>
-            `).join("")}
-          </div>
-        `;
-      }).join("");
+              ${docs.map(d => `
+                <div class="collection-doc-item" onclick="openSplitReader('${d.id}', null, null)" title="${escapeHtml(d.title)} (Click to view full text in reader)">
+                  <span class="collection-doc-name">${escapeHtml(d.title)}</span>
+                  <span class="collection-doc-chunks">${d.chunk_count}p</span>
+                </div>
+              `).join("")}
+            </div>
+          `;
+        }).join("");
+      }
     }
+
+    // Always refresh starter inquiries to reflect current workspace documentation
+    renderStarterInquiries(activeCollectionFilter || "all");
   } catch (err) {
     if (container) {
       container.innerHTML = `<div class="empty-threads-notice">Error loading library: ${escapeHtml(err.message)}</div>`;
@@ -1076,9 +1179,49 @@ const STARTER_INQUIRIES_BY_SCOPE = {
 function renderStarterInquiries(colName) {
   const grid = document.getElementById("starters-grid");
   const label = document.getElementById("starters-label");
+  const hint = document.getElementById("starters-hint");
   if (!grid) return;
 
-  const items = STARTER_INQUIRIES_BY_SCOPE[colName] || STARTER_INQUIRIES_BY_SCOPE["all"];
+  colName = colName || activeCollectionFilter || "all";
+
+  // Case 1: Workspace has 0 documents
+  if (!allDocuments || allDocuments.length === 0) {
+    if (label) label.textContent = "Workspace Document Library:";
+    if (hint) hint.textContent = "No documents currently indexed";
+    grid.innerHTML = `
+      <div class="workspace-empty-docs-card" style="grid-column: 1 / -1;">
+        <div class="empty-docs-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+        </div>
+        <div class="empty-docs-title">No documents indexed in this workspace yet</div>
+        <p class="empty-docs-desc">Upload policy handbooks, technical specifications, or PDFs in the left panel to begin asking questions with verified citations.</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openUploadModal()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span>Upload First Document</span>
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  // Case 2: Documents exist in this workspace
+  const docCount = allDocuments.length;
+  if (hint) {
+    hint.textContent = `Derived from ${docCount} indexed workspace document${docCount === 1 ? '' : 's'}`;
+  }
+
+  const relevantDocs = colName === "all"
+    ? allDocuments
+    : allDocuments.filter(d => (d.collection || "General Documentation") === colName);
 
   if (label) {
     if (colName === "all") {
@@ -1088,7 +1231,37 @@ function renderStarterInquiries(colName) {
     }
   }
 
-  grid.innerHTML = items.map(item => `
+  let items = [];
+  if (STARTER_INQUIRIES_BY_SCOPE[colName]) {
+    items = [...STARTER_INQUIRIES_BY_SCOPE[colName]];
+  } else if (colName === "all") {
+    const hasSecurity = allDocuments.some(d => d.title && d.title.toLowerCase().includes("security"));
+    const hasBenefits = allDocuments.some(d => d.title && (d.title.toLowerCase().includes("benefit") || d.title.toLowerCase().includes("employee")));
+    const hasApi = allDocuments.some(d => d.title && (d.title.toLowerCase().includes("api") || d.title.toLowerCase().includes("rest")));
+
+    if (hasSecurity && hasBenefits && hasApi) {
+      items = [...(STARTER_INQUIRIES_BY_SCOPE["all"] || [])];
+    }
+  }
+
+  // If custom documents exist without predefined templates, dynamically synthesize inquiry cards
+  if (items.length === 0) {
+    relevantDocs.slice(0, 4).forEach(doc => {
+      const tag = doc.collection || "Workspace Document";
+      const cleanTitle = doc.title || "Document";
+      items.push({
+        tag: tag,
+        title: `Key Provisions & Compliance in ${cleanTitle}`,
+        query: `What are the primary rules, requirements, and procedures specified in ${cleanTitle}?`
+      });
+    });
+  }
+
+  if (items.length === 0) {
+    items = STARTER_INQUIRIES_BY_SCOPE["all"] || [];
+  }
+
+  grid.innerHTML = items.slice(0, 4).map(item => `
     <button type="button" class="starter-card" data-query="${escapeHtml(item.query)}" onclick="executeStarterInquiry(this)">
       <div class="starter-tag">${escapeHtml(item.tag)}</div>
       <div class="starter-title">${escapeHtml(item.title)}</div>
@@ -1326,6 +1499,8 @@ function startNewInvestigation() {
   if (feed) feed.innerHTML = "";
   if (titleEl) titleEl.textContent = "Enterprise Document Intelligence";
   if (exportBtn) exportBtn.style.display = "none";
+
+  renderStarterInquiries(activeCollectionFilter || "all");
 
   if (input) {
     input.value = "";
