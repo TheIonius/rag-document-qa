@@ -1,3 +1,4 @@
+import csv
 import io
 import re
 from pathlib import Path
@@ -21,8 +22,41 @@ def parse_document_content(filename: str, content_bytes: bytes) -> ParsedDocumen
         return parse_pdf(filename, content_bytes)
     elif file_type in ("md", "markdown"):
         return parse_markdown(filename, content_bytes.decode("utf-8", errors="replace"))
+    elif file_type in ("csv", "tsv"):
+        return parse_csv(filename, content_bytes.decode("utf-8", errors="replace"), delimiter="\t" if file_type == "tsv" else ",")
     else:  # txt or other plain text
         return parse_text(filename, content_bytes.decode("utf-8", errors="replace"))
+
+def parse_csv(filename: str, text: str, delimiter: str = ",") -> ParsedDocument:
+    cleaned = clean_text(text)
+    title = infer_title(cleaned, filename)
+    reader = csv.reader(io.StringIO(cleaned), delimiter=delimiter)
+    rows = [row for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return ParsedDocument(filename, title, "csv" if delimiter == "," else "tsv", len(text.encode("utf-8")), "", [(1, "")])
+
+    headers = [cell.strip().replace("|", "/") for cell in rows[0]]
+    header_line = "| " + " | ".join(headers) + " |"
+    separator_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+    table_lines = [f"# {title}\n", header_line, separator_line]
+
+    for row in rows[1:]:
+        padded = [cell.strip().replace("|", "/").replace("\n", " ") for cell in row]
+        if len(padded) < len(headers):
+            padded.extend([""] * (len(headers) - len(padded)))
+        else:
+            padded = padded[:len(headers)]
+        table_lines.append("| " + " | ".join(padded) + " |")
+
+    markdown_table = "\n".join(table_lines)
+    return ParsedDocument(
+        filename=filename,
+        title=title,
+        file_type="csv" if delimiter == "," else "tsv",
+        file_size=len(text.encode("utf-8")),
+        raw_text=markdown_table,
+        pages=[(1, markdown_table)]
+    )
 
 def parse_pdf(filename: str, content_bytes: bytes) -> ParsedDocument:
     stream = io.BytesIO(content_bytes)

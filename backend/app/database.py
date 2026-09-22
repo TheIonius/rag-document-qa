@@ -92,6 +92,7 @@ def init_db(db_path: Path = None):
             effective_from TEXT,
             effective_until TEXT,
             uploaded_by_id TEXT,
+            security_tags TEXT DEFAULT '["public"]',
             FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
         );
 
@@ -262,6 +263,7 @@ def init_db(db_path: Path = None):
             ("documents", "effective_until TEXT"),
             ("documents", "uploaded_by_id TEXT"),
             ("documents", "collection TEXT DEFAULT 'General Documentation'"),
+            ("documents", "security_tags TEXT DEFAULT '[\"public\"]'"),
             ("chunks", "embedding_blob BLOB"),
             ("chunks", "embedding_model TEXT DEFAULT 'BAAI/bge-small-en-v1.5'"),
             ("query_logs", "workspace_id TEXT"),

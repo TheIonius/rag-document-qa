@@ -20,6 +20,7 @@ class DocumentMetadata(BaseModel):
     effective_from: Optional[str] = None
     effective_until: Optional[str] = None
     uploaded_by_id: Optional[str] = None
+    security_tags: Optional[str] = "[\"public\"]"
 
 
 class ChunkDetail(BaseModel):
@@ -50,13 +51,22 @@ class Citation(BaseModel):
     matched_terms: Optional[List[str]] = Field(default_factory=list, description="Query keywords matching chunk text")
     effective_date: Optional[str] = Field(None, description="Document effective date if specified")
 
+class RAGTriadResult(BaseModel):
+    context_relevance: float = Field(..., ge=0.0, le=1.0, description="Retrieved chunk relevance to inquiry")
+    groundedness: float = Field(..., ge=0.0, le=1.0, description="Faithfulness of answer to retrieved context")
+    answer_relevance: float = Field(..., ge=0.0, le=1.0, description="Direct relevance of answer to user question")
+    composite_score: float = Field(..., ge=0.0, le=1.0, description="RAG Triad harmonic score")
+
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=2, description="Question to answer from indexed documents")
     top_k: int = Field(4, ge=1, le=10, description="Number of context chunks to retrieve")
     document_filter: Optional[List[str]] = Field(None, description="Optional document IDs to restrict search to")
+    user_tags: Optional[List[str]] = Field(None, description="Optional user security tags for document ACL filtering")
     dense_weight: Optional[float] = Field(None, ge=0.0, le=1.0, description="Weight for Dense vector retrieval (0.0 - 1.0)")
     bm25_weight: Optional[float] = Field(None, ge=0.0, le=1.0, description="Weight for BM25 lexical retrieval (0.0 - 1.0)")
     refusal_threshold: Optional[float] = Field(None, ge=0.0, le=10.0, description="Relevance cutoff threshold below which queries are marked out of scope")
+    enable_reranker: Optional[bool] = Field(None, description="Enable 2nd-stage cross-encoder reranker")
+    stream: Optional[bool] = Field(False, description="Enable real-time token streaming")
     multi_hop: Optional[bool] = Field(False, description="Enable multi-hop sub-query decomposition for complex multi-part questions")
     thread_id: Optional[str] = Field(None, description="Optional thread ID to link inquiry to an ongoing investigation")
     workspace_id: Optional[str] = Field(None, description="Workspace scoping for multi-tenancy")
@@ -92,6 +102,7 @@ class QueryResponse(BaseModel):
     workspace_id: Optional[str] = Field(None, description="Workspace ID")
     query_log_id: Optional[str] = Field(None, description="Query audit log ID")
     prompt_injection_warning: Optional[str] = Field(None, description="Warning if adversarial prompt injection detected")
+    rag_triad: Optional[RAGTriadResult] = Field(None, description="RAG Triad evaluation metrics")
 
 class ThreadMessage(BaseModel):
     id: str
@@ -187,6 +198,7 @@ class EvaluationBenchmarkResult(BaseModel):
     grounded: bool
     latency_ms: int
     status: str
+    rag_triad: Optional[RAGTriadResult] = None
 
 # Enterprise and Multi-Tenancy Schemas
 

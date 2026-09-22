@@ -1247,22 +1247,112 @@ function renderGeneralMarkdown(text) {
   const rawLines = text.split("\n");
   let html = "";
   let inUl = false;
+  let inOl = false;
+  let inCode = false;
+  let codeBuffer = [];
+  let tableBuffer = [];
+
+  function flushTable() {
+    if (tableBuffer.length === 0) return "";
+    let tableHtml = '<div class="table-responsive"><table class="synthesis-table">';
+    const headerRow = tableBuffer[0];
+    const headers = headerRow.split("|").map(c => c.trim()).filter((c, idx, arr) => idx > 0 && idx < arr.length - 1);
+    tableHtml += '<thead><tr>' + headers.map(h => `<th>${formatInlineMarkdown(h)}</th>`).join('') + '</tr></thead><tbody>';
+
+    const startIdx = (tableBuffer.length > 1 && tableBuffer[1].includes("---")) ? 2 : 1;
+    for (let r = startIdx; r < tableBuffer.length; r++) {
+      const cells = tableBuffer[r].split("|").map(c => c.trim()).filter((c, idx, arr) => idx > 0 && idx < arr.length - 1);
+      tableHtml += '<tr>' + cells.map(c => `<td>${formatInlineMarkdown(c)}</td>`).join('') + '</tr>';
+    }
+    tableHtml += '</tbody></table></div>';
+    tableBuffer = [];
+    return tableHtml;
+  }
 
   for (let i = 0; i < rawLines.length; i++) {
-    let line = rawLines[i].trim();
-    if (!line) {
+    let line = rawLines[i];
+    let trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (inCode) {
+        html += `<pre class="synthesis-code-block"><code>${escapeHtml(codeBuffer.join("\n"))}</code></pre>`;
+        codeBuffer = [];
+        inCode = false;
+      } else {
+        if (inUl) { html += "</ul>"; inUl = false; }
+        if (inOl) { html += "</ol>"; inOl = false; }
+        if (tableBuffer.length > 0) html += flushTable();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeBuffer.push(line);
+      continue;
+    }
+
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
       if (inUl) { html += "</ul>"; inUl = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
+      tableBuffer.push(trimmed);
+      continue;
+    } else if (tableBuffer.length > 0) {
+      html += flushTable();
+    }
+
+    if (!trimmed) {
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
       continue;
     }
-    if (line.startsWith("- ") || line.startsWith("* ")) {
+
+    if (trimmed.startsWith("### ")) {
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
+      html += `<h5 class="synthesis-heading">${formatInlineMarkdown(trimmed.substring(4))}</h5>`;
+      continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
+      html += `<h4 class="synthesis-heading">${formatInlineMarkdown(trimmed.substring(3))}</h4>`;
+      continue;
+    }
+    if (trimmed.startsWith("# ")) {
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
+      html += `<h3 class="synthesis-heading">${formatInlineMarkdown(trimmed.substring(2))}</h3>`;
+      continue;
+    }
+
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      if (inOl) { html += "</ol>"; inOl = false; }
       if (!inUl) { html += '<ul class="synthesis-list">'; inUl = true; }
-      html += `<li>${formatInlineMarkdown(line.substring(2).trim())}</li>`;
+      html += `<li>${formatInlineMarkdown(trimmed.substring(2).trim())}</li>`;
       continue;
     }
+
+    const olMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+    if (olMatch) {
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (!inOl) { html += '<ol class="synthesis-list">'; inOl = true; }
+      html += `<li>${formatInlineMarkdown(olMatch[2].trim())}</li>`;
+      continue;
+    }
+
     if (inUl) { html += "</ul>"; inUl = false; }
-    html += `<p class="synthesis-paragraph">${formatInlineMarkdown(line)}</p>`;
+    if (inOl) { html += "</ol>"; inOl = false; }
+    html += `<p class="synthesis-paragraph">${formatInlineMarkdown(trimmed)}</p>`;
+  }
+
+  if (inCode && codeBuffer.length > 0) {
+    html += `<pre class="synthesis-code-block"><code>${escapeHtml(codeBuffer.join("\n"))}</code></pre>`;
+  }
+  if (tableBuffer.length > 0) {
+    html += flushTable();
   }
   if (inUl) html += "</ul>";
+  if (inOl) html += "</ol>";
   return html;
 }
 
@@ -1279,12 +1369,11 @@ function transformInlineFootnotes(html, citations) {
 
 function formatInlineMarkdown(text) {
   if (!text) return "";
-  // Strictly escape all HTML entities first to prevent Stored XSS
   const safeText = escapeHtml(text);
   return safeText
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code style="font-family:\'JetBrains Mono\',monospace; font-size:12px; background:#e2e8f0; padding:1px 4px; border-radius:3px;">$1</code>');
+    .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
 }
 
 // Document reader

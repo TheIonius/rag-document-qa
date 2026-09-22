@@ -1,8 +1,9 @@
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 import numpy as np
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
 
 from app.config import settings
 from app.database import get_db, record_audit_event, utc_now_iso
@@ -46,7 +47,7 @@ def list_documents(
         rows = conn.execute("""
             SELECT id, filename, title, file_type, file_size, page_count, chunk_count,
                    created_at, collection, workspace_id, version, sha256_checksum,
-                   status, effective_from, effective_until, uploaded_by_id
+                   status, effective_from, effective_until, uploaded_by_id, security_tags
             FROM documents
             WHERE (workspace_id = ? OR (workspace_id IS NULL AND ? = 'ws_default'))
             ORDER BY created_at DESC
@@ -202,12 +203,106 @@ def get_chunk_analytics(document_id: str, user: Optional[dict] = Depends(get_opt
         overlap_pairs=overlap_pairs
     )
 
+def process_background_ingestion(
+    job_id: str,
+    doc_id: str,
+    filename: str,
+    content: bytes,
+    active_ws: str,
+    user_id: Optional[str],
+    user_email: Optional[str],
+    security_tags_str: str,
+    storage_path: str,
+    checksum: str
+):
+    now = utc_now_iso()
+    try:
+        with get_db() as conn:
+            conn.execute("UPDATE ingestion_jobs SET status = 'PARSING', progress_pct = 25 WHERE id = ?", (job_id,))
+        parsed = parse_document_content(filename, content)
+
+        with get_db() as conn:
+            conn.execute("UPDATE ingestion_jobs SET status = 'CHUNKING', progress_pct = 50 WHERE id = ?", (job_id,))
+        chunks = chunk_document(parsed)
+
+        with get_db() as conn:
+            conn.execute("UPDATE ingestion_jobs SET status = 'EMBEDDING', progress_pct = 75 WHERE id = ?", (job_id,))
+        texts_to_embed = [c.text for c in chunks]
+        embed_matrix = search_engine._embed_texts(texts_to_embed)
+
+        with get_db() as conn:
+            latest_ver_row = conn.execute("""
+                SELECT MAX(version) FROM documents WHERE workspace_id = ? AND filename = ?
+            """, (active_ws, parsed.filename)).fetchone()
+            version = (latest_ver_row[0] or 0) + 1 if latest_ver_row and latest_ver_row[0] else 1
+
+            conn.execute("""
+                UPDATE documents
+                SET status = 'SUPERSEDED'
+                WHERE workspace_id = ? AND filename = ? AND status = 'READY'
+            """, (active_ws, parsed.filename))
+
+            conn.execute("""
+                UPDATE documents
+                SET title = ?, file_type = ?, file_size = ?, page_count = ?, chunk_count = ?,
+                    raw_text = ?, version = ?, status = 'READY'
+                WHERE id = ?
+            """, (
+                parsed.title, parsed.file_type, parsed.file_size, len(parsed.pages),
+                len(chunks), parsed.raw_text, version, doc_id
+            ))
+
+            chunk_records = []
+            for idx, c in enumerate(chunks):
+                chk_id = f"chk_{doc_id}_{c.chunk_index}"
+                blob = embed_matrix[idx].tobytes() if idx < len(embed_matrix) else None
+                chunk_records.append((
+                    chk_id, doc_id, c.chunk_index, c.section_title,
+                    c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob, now
+                ))
+
+            conn.executemany("""
+                INSERT INTO chunks (
+                    id, document_id, chunk_index, section_title,
+                    page_number, text, word_count, char_start, char_end, embedding_blob, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, chunk_records)
+
+            conn.execute("""
+                UPDATE ingestion_jobs
+                SET status = 'COMPLETED', progress_pct = 100, completed_at = ?
+                WHERE id = ?
+            """, (utc_now_iso(), job_id))
+
+        record_audit_event(
+            action="document_upload_async_complete",
+            resource_type="document",
+            resource_id=doc_id,
+            workspace_id=active_ws,
+            actor_id=user_id,
+            actor_email=user_email,
+            details={"filename": parsed.filename, "chunks_count": len(chunks), "version": version}
+        )
+        refresh_index_from_db()
+    except Exception as e:
+        with get_db() as conn:
+            conn.execute("""
+                UPDATE ingestion_jobs
+                SET status = 'FAILED', error_message = ?, completed_at = ?
+                WHERE id = ?
+            """, (str(e), utc_now_iso(), job_id))
+            conn.execute("UPDATE documents SET status = 'FAILED' WHERE id = ?", (doc_id,))
+
 @router.post("/upload", response_model=DocumentMetadata, status_code=201)
 async def upload_document(
+    response: Response,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     workspace_id: Optional[str] = Query(None),
     x_workspace_id: Optional[str] = Header(None, alias="X-Workspace-Id"),
-    user: Optional[dict] = Depends(get_optional_user)
+    user: Optional[dict] = Depends(get_optional_user),
+    security_tags: Optional[str] = Query('["public"]', description="JSON string list of security tags"),
+    async_mode: bool = Query(False, description="Process parsing and embedding in background queue")
 ):
     active_ws = workspace_id or x_workspace_id or "ws_default"
 
@@ -225,9 +320,9 @@ async def upload_document(
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Editor or Admin role required to upload documents.")
 
     filename = file.filename
-    allowed_exts = (".pdf", ".md", ".markdown", ".txt")
+    allowed_exts = (".pdf", ".md", ".markdown", ".txt", ".csv", ".tsv")
     if not any(filename.lower().endswith(ext) for ext in allowed_exts):
-        raise HTTPException(status_code=400, detail="Only .pdf, .md, and .txt documents are supported.")
+        raise HTTPException(status_code=400, detail="Supported formats: .pdf, .md, .txt, .csv, and .tsv.")
 
     content = await file.read(settings.max_upload_size_bytes + 1)
     if len(content) > settings.max_upload_size_bytes:
@@ -249,11 +344,55 @@ async def upload_document(
     doc_id = f"doc_{uuid.uuid4().hex[:10]}"
     job_id = f"job_{uuid.uuid4().hex[:10]}"
 
-    # Parse and chunk document
+    sec_tags_str = security_tags or '["public"]'
+
+    # If async_mode requested, enqueue background processing
+    if async_mode:
+        response.status_code = status.HTTP_202_ACCEPTED
+        with get_db() as conn:
+            conn.execute("""
+                INSERT INTO ingestion_jobs (id, workspace_id, document_id, status, progress_pct, created_at)
+                VALUES (?, ?, ?, 'QUEUED', 10, ?)
+            """, (job_id, active_ws, doc_id, now))
+
+            conn.execute("""
+                INSERT INTO documents (
+                    id, workspace_id, filename, title, file_type, file_size,
+                    page_count, chunk_count, created_at, raw_text, collection,
+                    version, sha256_checksum, storage_path, status, uploaded_by_id, security_tags
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, '', 'General Documentation', 1, ?, ?, 'PROCESSING', ?, ?)
+            """, (
+                doc_id, active_ws, filename, filename, filename.split(".")[-1],
+                len(content), now, checksum, storage_path, user["id"] if user else None, sec_tags_str
+            ))
+
+        background_tasks.add_task(
+            process_background_ingestion,
+            job_id, doc_id, filename, content, active_ws,
+            user["id"] if user else None, user["email"] if user else None,
+            sec_tags_str, storage_path, checksum
+        )
+
+        return DocumentMetadata(
+            id=doc_id,
+            filename=filename,
+            title=filename,
+            file_type=filename.split(".")[-1],
+            file_size=len(content),
+            page_count=1,
+            chunk_count=0,
+            created_at=now,
+            workspace_id=active_ws,
+            version=1,
+            sha256_checksum=checksum,
+            status="PROCESSING",
+            security_tags=sec_tags_str
+        )
+
+    # Synchronous processing
     parsed = parse_document_content(filename, content)
     chunks = chunk_document(parsed)
 
-    # Ingestion job record
     with get_db() as conn:
         conn.execute("""
             INSERT INTO ingestion_jobs (
@@ -268,7 +407,6 @@ async def upload_document(
             WHERE workspace_id = ? AND filename = ? AND status = 'READY'
         """, (active_ws, parsed.filename))
 
-        # Compute version: check if document with same filename exists in this workspace
         latest_ver_row = conn.execute("""
             SELECT MAX(version) FROM documents WHERE workspace_id = ? AND filename = ?
         """, (active_ws, parsed.filename)).fetchone()
@@ -278,15 +416,14 @@ async def upload_document(
             INSERT INTO documents (
                 id, workspace_id, filename, title, file_type, file_size,
                 page_count, chunk_count, created_at, raw_text, collection,
-                version, sha256_checksum, storage_path, status, uploaded_by_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'General Documentation', ?, ?, ?, 'READY', ?)
+                version, sha256_checksum, storage_path, status, uploaded_by_id, security_tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'General Documentation', ?, ?, ?, 'READY', ?, ?)
         """, (
             doc_id, active_ws, parsed.filename, parsed.title, parsed.file_type,
             parsed.file_size, len(parsed.pages), len(chunks), now, parsed.raw_text,
-            version, checksum, storage_path, user["id"] if user else None
+            version, checksum, storage_path, user["id"] if user else None, sec_tags_str
         ))
 
-        # Generate embeddings for chunks
         texts_to_embed = [c.text for c in chunks]
         embed_matrix = search_engine._embed_texts(texts_to_embed)
 
@@ -306,14 +443,12 @@ async def upload_document(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, chunk_records)
 
-        # Update job to complete
         conn.execute("""
             UPDATE ingestion_jobs
             SET status = 'READY', progress_pct = 100, completed_at = ?
             WHERE id = ?
         """, (utc_now_iso(), job_id))
 
-    # Audit event
     record_audit_event(
         action="document_upload",
         resource_type="document",
@@ -329,7 +464,6 @@ async def upload_document(
         }
     )
 
-    # Refresh search engine index
     refresh_index_from_db()
 
     return DocumentMetadata(
@@ -344,7 +478,34 @@ async def upload_document(
         workspace_id=active_ws,
         version=version,
         sha256_checksum=checksum,
-        status="READY"
+        status="READY",
+        security_tags=sec_tags_str
+    )
+
+@router.post("/upload/async", response_model=DocumentUploadResponse, status_code=202)
+async def upload_document_async(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    workspace_id: Optional[str] = Query(None),
+    x_workspace_id: Optional[str] = Header(None, alias="X-Workspace-Id"),
+    user: Optional[dict] = Depends(get_optional_user),
+    security_tags: Optional[str] = Query('["public"]')
+):
+    dummy_response = Response()
+    doc_meta = await upload_document(
+        response=dummy_response,
+        background_tasks=background_tasks,
+        file=file,
+        workspace_id=workspace_id,
+        x_workspace_id=x_workspace_id,
+        user=user,
+        security_tags=security_tags,
+        async_mode=True
+    )
+    return DocumentUploadResponse(
+        document=doc_meta,
+        is_duplicate=False,
+        message="Document queued for asynchronous background ingestion."
     )
 
 @router.delete("/{document_id}")
@@ -392,7 +553,8 @@ def refresh_index_from_db():
             SELECT 
                 c.id as chunk_id, c.document_id, d.title as document_title,
                 c.section_title, c.page_number, c.text, c.word_count,
-                c.embedding_blob, d.workspace_id, d.version, d.effective_from, d.effective_until
+                c.embedding_blob, d.workspace_id, d.version, d.effective_from, d.effective_until,
+                d.security_tags
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE d.status = 'READY'
@@ -408,6 +570,13 @@ def refresh_index_from_db():
                 except Exception:
                     emb = None
 
+            sec_tags = ["public"]
+            if "security_tags" in r.keys() and r["security_tags"]:
+                try:
+                    sec_tags = json.loads(r["security_tags"])
+                except Exception:
+                    sec_tags = ["public"]
+
             indexed_chunks.append(IndexedChunk(
                 chunk_id=r["chunk_id"],
                 document_id=r["document_id"],
@@ -420,7 +589,8 @@ def refresh_index_from_db():
                 embedding=emb,
                 effective_from=r["effective_from"],
                 effective_until=r["effective_until"],
-                version=r["version"] or 1
+                version=r["version"] or 1,
+                security_tags=sec_tags
             ))
 
         search_engine.index_chunks(indexed_chunks, persist_to_db=True)

@@ -36,10 +36,17 @@ class Settings(BaseSettings):
     vector_weight: float = 0.55
     confidence_threshold: float = 0.25
     embedding_model: str = "BAAI/bge-small-en-v1.5"
+    enable_reranker: bool = True
+    reranker_candidates: int = 15
 
-    # LLM inference config
+    # LLM inference and provider config
+    llm_provider: str = "auto"
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5-coder:7b"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
     request_timeout_seconds: float = 15.0
 
     # Governance and Safety

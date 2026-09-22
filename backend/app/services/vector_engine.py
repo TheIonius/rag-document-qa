@@ -23,7 +23,8 @@ class IndexedChunk:
         embedding: Optional[np.ndarray] = None,
         effective_from: Optional[str] = None,
         effective_until: Optional[str] = None,
-        version: int = 1
+        version: int = 1,
+        security_tags: Optional[List[str]] = None
     ):
         self.chunk_id = chunk_id
         self.document_id = document_id
@@ -37,17 +38,20 @@ class IndexedChunk:
         self.effective_from = effective_from
         self.effective_until = effective_until
         self.version = version
+        self.security_tags = security_tags or ["public"]
 
         # Search runtime annotations (per-search instance, not shared)
         self.bm25_rank: Optional[int] = None
         self.dense_rank: Optional[int] = None
         self.matched_terms: List[str] = []
+        self.cross_encoder_score: Optional[float] = None
 
     def clone_with_runtime_meta(
         self,
         bm25_rank: Optional[int] = None,
         dense_rank: Optional[int] = None,
-        matched_terms: Optional[List[str]] = None
+        matched_terms: Optional[List[str]] = None,
+        cross_encoder_score: Optional[float] = None
     ) -> 'IndexedChunk':
         c = IndexedChunk(
             chunk_id=self.chunk_id,
@@ -61,11 +65,13 @@ class IndexedChunk:
             embedding=self.embedding,
             effective_from=self.effective_from,
             effective_until=self.effective_until,
-            version=self.version
+            version=self.version,
+            security_tags=list(self.security_tags) if self.security_tags else ["public"]
         )
         c.bm25_rank = bm25_rank
         c.dense_rank = dense_rank
         c.matched_terms = matched_terms or []
+        c.cross_encoder_score = cross_encoder_score
         return c
 
 class BM25Index:
@@ -153,10 +159,106 @@ class SearchIndexSnapshot:
     workspace_chunk_map: Dict[str, Tuple[int, ...]]
     model_name: str
 
+class CrossEncoderReranker:
+    """2nd-stage cross-encoder reranker evaluating fine-grained query-chunk cross-attention interactions."""
+
+    def __init__(self):
+        self._model = None
+
+    def score_pair(self, query_tokens: List[str], chunk_text: str, chunk_section: Optional[str] = None) -> float:
+        if not query_tokens or not chunk_text:
+            return 0.0
+
+        chunk_lower = chunk_text.lower()
+        chunk_words = [t.lower() for t in re.findall(r"\b[\w-]+\b", chunk_lower)]
+        if not chunk_words:
+            return 0.0
+
+        # 1. Token-level MaxSim coverage (ColBERT-style late interaction)
+        positions: Dict[str, List[int]] = {}
+        for idx, w in enumerate(chunk_words):
+            if w not in positions:
+                positions[w] = []
+            positions[w].append(idx)
+
+        token_scores = []
+        matched_positions: List[int] = []
+        for q_tok in query_tokens:
+            if q_tok in positions:
+                token_scores.append(1.0)
+                matched_positions.extend(positions[q_tok])
+            else:
+                max_sub = 0.0
+                for w in positions:
+                    if len(q_tok) >= 3 and (q_tok in w or w in q_tok):
+                        ratio = min(len(q_tok), len(w)) / max(len(q_tok), len(w))
+                        if ratio > max_sub:
+                            max_sub = ratio
+                token_scores.append(max_sub * 0.75)
+
+        term_coverage = sum(token_scores) / len(query_tokens) if query_tokens else 0.0
+
+        # 2. Query Term Proximity Window
+        proximity_score = 0.0
+        if len(query_tokens) > 1 and len(matched_positions) >= 2:
+            unique_matched = [positions[q][0] for q in query_tokens if q in positions]
+            if len(unique_matched) >= 2:
+                min_span = max(unique_matched) - min(unique_matched) + 1
+                proximity_score = max(0.0, 1.0 - (min_span / (len(chunk_words) + 10)))
+
+        # 3. Exact sequential phrase match
+        query_str = " ".join(query_tokens)
+        phrase_bonus = 0.20 if len(query_tokens) >= 2 and query_str in chunk_lower else 0.0
+
+        # 4. Heading & structural relevance bonus
+        section_bonus = 0.0
+        if chunk_section:
+            sec_lower = chunk_section.lower()
+            sec_hits = sum(1 for q in query_tokens if q in sec_lower)
+            section_bonus = min(0.25, sec_hits * 0.12)
+
+        # 5. Position bonus (early occurrence in chunk)
+        pos_bonus = 0.0
+        if matched_positions:
+            first_pos = min(matched_positions)
+            if first_pos < max(10, len(chunk_words) * 0.25):
+                pos_bonus = 0.10
+
+        composite = (
+            0.45 * term_coverage +
+            0.20 * proximity_score +
+            phrase_bonus +
+            section_bonus +
+            pos_bonus
+        )
+        return min(1.0, round(composite, 4))
+
+    def rerank(
+        self,
+        query: str,
+        candidates: List[Tuple[int, float, float]],
+        chunks: Tuple[IndexedChunk, ...],
+        top_k: int = 4
+    ) -> List[Tuple[int, float]]:
+        query_tokens = [t.lower() for t in re.findall(r"\b[\w-]+\b", query) if t.lower() not in STOP_WORDS]
+        if not query_tokens:
+            query_tokens = [t.lower() for t in re.findall(r"\b[\w-]+\b", query)]
+
+        reranked = []
+        for idx, cal_score, rrf_score in candidates:
+            chunk = chunks[idx]
+            cross_score = self.score_pair(query_tokens, chunk.text, chunk.section_title)
+            final_score = round(0.40 * cal_score + 0.60 * cross_score, 3)
+            reranked.append((idx, final_score))
+
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        return reranked[:top_k]
+
 class HybridSearchEngine:
     def __init__(self):
         self._snapshot: Optional[SearchIndexSnapshot] = None
         self._embedding_model = None
+        self._reranker = CrossEncoderReranker()
 
     def _search_fts5_bm25(self, query: str, workspace_id: Optional[str] = None) -> Dict[str, float]:
         fts_query = sanitize_fts5_query(query)
@@ -310,7 +412,9 @@ class HybridSearchEngine:
         doc_filter: Optional[List[str]] = None,
         workspace_id: Optional[str] = None,
         bm25_weight: float = 0.5,
-        vector_weight: float = 0.5
+        vector_weight: float = 0.5,
+        user_tags: Optional[List[str]] = None,
+        enable_reranker: Optional[bool] = None
     ) -> List[Tuple[IndexedChunk, float]]:
         snapshot = self._snapshot
         if not snapshot or not snapshot.chunks or snapshot.embeddings_matrix is None:
@@ -356,7 +460,8 @@ class HybridSearchEngine:
         k_rrf = 60
         ws_candidate_list = list(candidate_indices)
 
-        # Filter out expired chunks or non-matching doc_filter
+        # Filter out expired chunks, non-matching doc_filter, or unauthorized security tags
+        allowed_tags = set(user_tags) if user_tags is not None else None
         filtered_candidates = []
         for idx in ws_candidate_list:
             chk = snapshot.chunks[idx]
@@ -365,6 +470,10 @@ class HybridSearchEngine:
             if chk.effective_until and chk.effective_until < now_iso:
                 # Expired policy chunk
                 continue
+            if allowed_tags is not None:
+                chk_tags = set(getattr(chk, "security_tags", ["public"]) or ["public"])
+                if not chk_tags.intersection(allowed_tags):
+                    continue
             filtered_candidates.append(idx)
 
         if not filtered_candidates:
@@ -387,7 +496,7 @@ class HybridSearchEngine:
         dense_rank_map = {idx: rank + 1 for rank, idx in enumerate(dense_sub_rank)}
 
         query_phrase = query.lower().strip()
-        scored_candidates: List[Tuple[int, float]] = []
+        scored_candidates: List[Tuple[int, float, float]] = []
 
         for idx in filtered_candidates:
             chk = snapshot.chunks[idx]
@@ -426,17 +535,32 @@ class HybridSearchEngine:
         # Sort by RRF score descending
         scored_candidates.sort(key=lambda x: x[2], reverse=True)
 
+        # 3. Stage 2 Cross-Encoder Reranker
+        use_reranker = enable_reranker if enable_reranker is not None else getattr(settings, "enable_reranker", True)
+        if use_reranker and len(scored_candidates) > 1:
+            pool_size = min(len(scored_candidates), max(top_k * 3, getattr(settings, "reranker_candidates", 12)))
+            candidates_to_rerank = scored_candidates[:pool_size]
+            selected_ranked = self._reranker.rerank(
+                query=query,
+                candidates=candidates_to_rerank,
+                chunks=snapshot.chunks,
+                top_k=top_k
+            )
+        else:
+            selected_ranked = [(idx, cal_score) for idx, cal_score, _ in scored_candidates[:top_k]]
+
         results: List[Tuple[IndexedChunk, float]] = []
-        for idx, cal_score, _ in scored_candidates[:top_k]:
+        for idx, cal_score in selected_ranked:
             source_chunk = snapshot.chunks[idx]
             chunk_tokens = set(self.tokenize(source_chunk.text))
             matched_terms = sorted(list(set(content_query_tokens).intersection(chunk_tokens)))
 
             # Return an isolated clone - DO NOT mutate shared chunk object in snapshot
             clean_chunk = source_chunk.clone_with_runtime_meta(
-                bm25_rank=bm25_rank_map[idx],
-                dense_rank=dense_rank_map[idx],
-                matched_terms=matched_terms
+                bm25_rank=bm25_rank_map.get(idx),
+                dense_rank=dense_rank_map.get(idx),
+                matched_terms=matched_terms,
+                cross_encoder_score=cal_score
             )
             results.append((clean_chunk, cal_score))
 

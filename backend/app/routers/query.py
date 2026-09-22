@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from app.security.auth import get_current_user, get_optional_user, require_workspace_membership
 
 from app.config import settings
@@ -20,6 +21,7 @@ from app.models.schemas import (
 from app.services.vector_engine import search_engine
 from app.services.llm_rag_engine import (
     generate_rag_answer,
+    generate_rag_stream,
     decompose_query,
     generate_comparative_synthesis
 )
@@ -80,7 +82,9 @@ async def execute_rag_query(
                     doc_filter=req.document_filter,
                     workspace_id=active_ws,
                     bm25_weight=bm25_w,
-                    vector_weight=dense_w
+                    vector_weight=dense_w,
+                    user_tags=req.user_tags,
+                    enable_reranker=req.enable_reranker
                 )
                 top_doc = sq_chunks[0][0].document_title if sq_chunks else "No direct match"
                 sub_queries_decomposed.append(SubQueryDecomposition(
@@ -102,7 +106,9 @@ async def execute_rag_query(
                 doc_filter=req.document_filter,
                 workspace_id=active_ws,
                 bm25_weight=bm25_w,
-                vector_weight=dense_w
+                vector_weight=dense_w,
+                user_tags=req.user_tags,
+                enable_reranker=req.enable_reranker
             )
     else:
         retrieved_chunks = search_engine.search(
@@ -111,7 +117,9 @@ async def execute_rag_query(
             doc_filter=req.document_filter,
             workspace_id=active_ws,
             bm25_weight=bm25_w,
-            vector_weight=dense_w
+            vector_weight=dense_w,
+            user_tags=req.user_tags,
+            enable_reranker=req.enable_reranker
         )
 
     # 2. Multi-turn conversation context
@@ -226,6 +234,124 @@ async def execute_rag_query(
     response.workspace_id = active_ws
     response.query_log_id = log_id
     return response
+
+@router.post("/stream")
+async def stream_rag_query(
+    req: QueryRequest,
+    x_workspace_id: Optional[str] = Header(None, alias="X-Workspace-Id"),
+    user: Optional[dict] = Depends(get_optional_user)
+):
+    if not isinstance(user, dict):
+        user = None
+
+    if not search_engine.is_indexed:
+        raise HTTPException(
+            status_code=400,
+            detail="No documents have been indexed yet. Please upload or ingest documents first."
+        )
+
+    active_ws = req.workspace_id or x_workspace_id or "ws_default"
+
+    if active_ws != "ws_default":
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to query this workspace."
+            )
+        if not user.get("is_superuser"):
+            with get_db() as conn:
+                mem = conn.execute(
+                    "SELECT id FROM workspace_memberships WHERE user_id = ? AND workspace_id = ?",
+                    (user["id"], active_ws)
+                ).fetchone()
+                if not mem:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to this workspace."
+                    )
+
+    bm25_w = req.bm25_weight if req.bm25_weight is not None else settings.bm25_weight
+    dense_w = req.dense_weight if req.dense_weight is not None else settings.vector_weight
+    refusal_thresh = req.refusal_threshold if req.refusal_threshold is not None else 0.20
+
+    sub_queries_decomposed = []
+    if req.multi_hop:
+        sub_qs = decompose_query(req.query)
+        if len(sub_qs) > 1:
+            all_chunks = []
+            seen_chunk_ids = set()
+            for idx, sq in enumerate(sub_qs, start=1):
+                sq_chunks = search_engine.search(
+                    query=sq,
+                    top_k=max(2, req.top_k // len(sub_qs)),
+                    doc_filter=req.document_filter,
+                    workspace_id=active_ws,
+                    bm25_weight=bm25_w,
+                    vector_weight=dense_w,
+                    user_tags=req.user_tags,
+                    enable_reranker=req.enable_reranker
+                )
+                top_doc = sq_chunks[0][0].document_title if sq_chunks else "No direct match"
+                sub_queries_decomposed.append(SubQueryDecomposition(
+                    sub_query_id=idx,
+                    sub_query=sq,
+                    retrieved_chunks_count=len(sq_chunks),
+                    top_source=top_doc
+                ))
+                for chk, score in sq_chunks:
+                    if chk.chunk_id not in seen_chunk_ids:
+                        seen_chunk_ids.add(chk.chunk_id)
+                        all_chunks.append((chk, score))
+            all_chunks.sort(key=lambda x: x[1], reverse=True)
+            retrieved_chunks = all_chunks[:req.top_k]
+        else:
+            retrieved_chunks = search_engine.search(
+                query=req.query,
+                top_k=req.top_k,
+                doc_filter=req.document_filter,
+                workspace_id=active_ws,
+                bm25_weight=bm25_w,
+                vector_weight=dense_w,
+                user_tags=req.user_tags,
+                enable_reranker=req.enable_reranker
+            )
+    else:
+        retrieved_chunks = search_engine.search(
+            query=req.query,
+            top_k=req.top_k,
+            doc_filter=req.document_filter,
+            workspace_id=active_ws,
+            bm25_weight=bm25_w,
+            vector_weight=dense_w,
+            user_tags=req.user_tags,
+            enable_reranker=req.enable_reranker
+        )
+
+    conversation_history = []
+    if req.thread_id:
+        try:
+            with get_db() as conn:
+                prior_rows = conn.execute("""
+                    SELECT role, content FROM thread_messages
+                    WHERE thread_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 4
+                """, (req.thread_id,)).fetchall()
+                for r in reversed(prior_rows):
+                    conversation_history.append({"role": r["role"], "content": r["content"]})
+        except Exception:
+            pass
+
+    return StreamingResponse(
+        generate_rag_stream(
+            query=req.query,
+            retrieved_chunks=retrieved_chunks,
+            refusal_threshold=refusal_thresh,
+            sub_queries=sub_queries_decomposed,
+            conversation_history=conversation_history
+        ),
+        media_type="text/event-stream"
+    )
 
 @router.post("/compare", response_model=CompareResponse)
 def compare_documents(

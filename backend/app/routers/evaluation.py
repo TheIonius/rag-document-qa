@@ -93,7 +93,8 @@ async def run_evaluation_benchmark(
             citation_found=len(res.citations) > 0,
             grounded=res.groundedness_score >= 0.70,
             latency_ms=res.processing_time_ms,
-            status=status
+            status=status,
+            rag_triad=res.rag_triad
         )
         results.append(res_item)
         total_latency += res.processing_time_ms

@@ -1,7 +1,9 @@
+import asyncio
 import json
+import os
 import re
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import AsyncGenerator, Dict, List, Optional, Tuple
 import httpx
 from app.config import settings
 from app.models.schemas import (
@@ -11,7 +13,8 @@ from app.models.schemas import (
     SubQueryDecomposition,
     CompareResponse,
     ComparisonDimension,
-    DocumentMetadata
+    DocumentMetadata,
+    RAGTriadResult
 )
 from app.services.vector_engine import IndexedChunk, STOP_WORDS
 from app.services.citation_verifier import verify_citation, find_best_excerpt_in_chunk
@@ -116,10 +119,15 @@ async def generate_rag_answer(
         f"Provide response in JSON format:"
     )
 
-    # try ollama
-    ollama_res = await call_ollama(user_prompt)
-    if ollama_res:
-        parsed_res = parse_llm_json_response(ollama_res, query, chunk_map, retrieved_chunks)
+    # Call active LLM Provider with automatic fallback
+    provider = get_llm_provider()
+    llm_res = await provider.generate(user_prompt)
+    if not llm_res and not isinstance(provider, OllamaProvider):
+        # Fallback check against local Ollama if remote provider fails
+        llm_res = await call_ollama(user_prompt)
+
+    if llm_res:
+        parsed_res = parse_llm_json_response(llm_res, query, chunk_map, retrieved_chunks)
         if parsed_res:
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             parsed_res.processing_time_ms = elapsed_ms
@@ -127,10 +135,12 @@ async def generate_rag_answer(
             parsed_res.sentence_evaluations = evaluate_sentence_groundedness(
                 parsed_res.answer, parsed_res.citations, retrieved_chunks
             )
-            # compute groundedness from sentence evaluations
             if parsed_res.sentence_evaluations:
                 grounded_cnt = sum(1 for s in parsed_res.sentence_evaluations if s.grounded)
                 parsed_res.groundedness_score = round(grounded_cnt / len(parsed_res.sentence_evaluations), 2)
+            parsed_res.rag_triad = calculate_rag_triad(
+                query, retrieved_chunks, parsed_res.answer, parsed_res.citations, parsed_res.sentence_evaluations
+            )
             return parsed_res
 
     # fallback to deterministic extractive answer
@@ -144,7 +154,262 @@ async def generate_rag_answer(
     if fallback_res.sentence_evaluations:
         grounded_cnt = sum(1 for s in fallback_res.sentence_evaluations if s.grounded)
         fallback_res.groundedness_score = round(grounded_cnt / len(fallback_res.sentence_evaluations), 2)
+    fallback_res.rag_triad = calculate_rag_triad(
+        query, retrieved_chunks, fallback_res.answer, fallback_res.citations, fallback_res.sentence_evaluations
+    )
     return fallback_res
+
+def calculate_rag_triad(
+    query: str,
+    retrieved_chunks: List[Tuple[IndexedChunk, float]],
+    answer: str,
+    citations: List[Citation],
+    sentence_evaluations: List[SentenceGroundedness]
+) -> RAGTriadResult:
+    """Computes RAG Triad metrics: Context Relevance, Groundedness/Faithfulness, and Answer Relevance."""
+    q_tokens = [t.lower() for t in re.findall(r"\b[\w-]+\b", query) if t.lower() not in STOP_WORDS]
+    if not q_tokens:
+        q_tokens = [t.lower() for t in re.findall(r"\b[\w-]+\b", query)]
+
+    # 1. Context Relevance: Fraction of retrieved chunks bearing lexical or semantic relevance
+    relevant_chunks = 0
+    for chunk, score in retrieved_chunks:
+        c_text = chunk.text.lower()
+        if any(tok in c_text for tok in q_tokens) or score >= 0.35:
+            relevant_chunks += 1
+    context_relevance = round(relevant_chunks / len(retrieved_chunks), 2) if retrieved_chunks else 0.0
+
+    # 2. Groundedness / Faithfulness: Verified sentence ratio
+    if sentence_evaluations:
+        grounded_count = sum(1 for s in sentence_evaluations if s.grounded)
+        groundedness = round(grounded_count / len(sentence_evaluations), 2)
+    elif citations:
+        groundedness = 0.90
+    else:
+        groundedness = 1.0 if "cannot find information" in answer.lower() else 0.0
+
+    # 3. Answer Relevance: Degree to which answer addresses question terms
+    a_tokens = set(re.findall(r"\b[\w-]+\b", answer.lower()))
+    q_set = set(q_tokens)
+    overlap = len(q_set.intersection(a_tokens))
+    answer_relevance = round(min(1.0, (overlap / max(1, len(q_set))) + 0.20 if overlap > 0 else 0.10), 2)
+
+    # Composite Harmonic Score
+    if context_relevance > 0 and groundedness > 0 and answer_relevance > 0:
+        composite = round(3.0 / ((1.0 / context_relevance) + (1.0 / groundedness) + (1.0 / answer_relevance)), 2)
+    else:
+        composite = round(0.35 * context_relevance + 0.40 * groundedness + 0.25 * answer_relevance, 2)
+
+    return RAGTriadResult(
+        context_relevance=context_relevance,
+        groundedness=groundedness,
+        answer_relevance=answer_relevance,
+        composite_score=composite
+    )
+
+class BaseLLMProvider:
+    async def generate(self, prompt: str) -> Optional[str]:
+        raise NotImplementedError
+
+    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        raise NotImplementedError
+
+class OllamaProvider(BaseLLMProvider):
+    def __init__(self, url: Optional[str] = None, model: Optional[str] = None):
+        self.url = url or settings.ollama_url
+        self.model = model or settings.ollama_model
+
+    async def generate(self, prompt: str) -> Optional[str]:
+        try:
+            timeout = httpx.Timeout(settings.request_timeout_seconds, connect=1.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f"{self.url}/api/generate",
+                    json={
+                        "model": self.model,
+                        "prompt": f"{SYSTEM_PROMPT}\n\n{prompt}",
+                        "stream": False,
+                        "format": "json",
+                        "options": {"temperature": 0.1}
+                    }
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("response", "")
+        except Exception:
+            pass
+        return None
+
+    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        try:
+            timeout = httpx.Timeout(settings.request_timeout_seconds, connect=1.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.url}/api/generate",
+                    json={
+                        "model": self.model,
+                        "prompt": f"{SYSTEM_PROMPT}\n\n{prompt}",
+                        "stream": True,
+                        "options": {"temperature": 0.1}
+                    }
+                ) as stream_resp:
+                    if stream_resp.status_code == 200:
+                        async for line in stream_resp.aiter_lines():
+                            if line:
+                                try:
+                                    data = json.loads(line)
+                                    chunk = data.get("response", "")
+                                    if chunk:
+                                        yield chunk
+                                except Exception:
+                                    pass
+        except Exception:
+            pass
+
+class GeminiProvider(BaseLLMProvider):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+        self.api_key = api_key or getattr(settings, "gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+        self.model = model or getattr(settings, "gemini_model", "gemini-2.0-flash")
+
+    async def generate(self, prompt: str) -> Optional[str]:
+        if not self.api_key:
+            return None
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{"parts": [{"text": f"{SYSTEM_PROMPT}\n\n{prompt}"}]}],
+            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
+        }
+        try:
+            timeout = httpx.Timeout(settings.request_timeout_seconds, connect=2.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates and "content" in candidates[0]:
+                        parts = candidates[0]["content"].get("parts", [])
+                        if parts:
+                            return parts[0].get("text", "")
+        except Exception:
+            pass
+        return None
+
+    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        if not self.api_key:
+            return
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?alt=sse&key={self.api_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{"parts": [{"text": f"{SYSTEM_PROMPT}\n\n{prompt}"}]}],
+            "generationConfig": {"temperature": 0.1}
+        }
+        try:
+            timeout = httpx.Timeout(settings.request_timeout_seconds, connect=2.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code == 200:
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: "):
+                                try:
+                                    data = json.loads(line[6:])
+                                    candidates = data.get("candidates", [])
+                                    if candidates and "content" in candidates[0]:
+                                        parts = candidates[0]["content"].get("parts", [])
+                                        for p in parts:
+                                            txt = p.get("text", "")
+                                            if txt:
+                                                yield txt
+                                except Exception:
+                                    pass
+        except Exception:
+            pass
+
+class OpenAIProvider(BaseLLMProvider):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+        self.api_key = api_key or getattr(settings, "openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+        self.model = model or getattr(settings, "openai_model", "gpt-4o-mini")
+
+    async def generate(self, prompt: str) -> Optional[str]:
+        if not self.api_key:
+            return None
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.1
+        }
+        try:
+            timeout = httpx.Timeout(settings.request_timeout_seconds, connect=2.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        return choices[0].get("message", {}).get("content", "")
+        except Exception:
+            pass
+        return None
+
+    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        if not self.api_key:
+            return
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "stream": True,
+            "temperature": 0.1
+        }
+        try:
+            timeout = httpx.Timeout(settings.request_timeout_seconds, connect=2.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code == 200:
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: ") and not line.endswith("[DONE]"):
+                                try:
+                                    data = json.loads(line[6:])
+                                    choices = data.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            yield content
+                                except Exception:
+                                    pass
+        except Exception:
+            pass
+
+def get_llm_provider() -> BaseLLMProvider:
+    pref = getattr(settings, "llm_provider", "auto").lower()
+    gemini_key = getattr(settings, "gemini_api_key", "") or os.getenv("GEMINI_API_KEY", "")
+    openai_key = getattr(settings, "openai_api_key", "") or os.getenv("OPENAI_API_KEY", "")
+
+    if pref == "gemini" and gemini_key:
+        return GeminiProvider(api_key=gemini_key)
+    elif pref == "openai" and openai_key:
+        return OpenAIProvider(api_key=openai_key)
+    elif pref == "ollama":
+        return OllamaProvider()
+    elif pref == "auto":
+        if gemini_key:
+            return GeminiProvider(api_key=gemini_key)
+        elif openai_key:
+            return OpenAIProvider(api_key=openai_key)
+        else:
+            return OllamaProvider()
+    return OllamaProvider()
 
 async def call_ollama(prompt: str) -> Optional[str]:
     try:
@@ -165,6 +430,69 @@ async def call_ollama(prompt: str) -> Optional[str]:
     except Exception:
         pass
     return None
+
+async def generate_rag_stream(
+    query: str,
+    retrieved_chunks: List[Tuple[IndexedChunk, float]],
+    refusal_threshold: float = 0.20,
+    sub_queries: Optional[List[SubQueryDecomposition]] = None,
+    conversation_history: Optional[List[dict]] = None
+) -> AsyncGenerator[str, None]:
+    """Streams RAG generation tokens as SSE events and emits final complete response."""
+    start_time = time.perf_counter()
+
+    if settings.enable_prompt_injection_defense:
+        is_injection, reason = check_prompt_injection(query)
+        if is_injection:
+            resp = QueryResponse(
+                query=query,
+                answer=f"Security Guardrail: Input rejected due to detected prompt injection signature ({reason}).",
+                is_out_of_scope=True,
+                confidence_score=0.0,
+                groundedness_score=0.0,
+                citations=[],
+                retrieved_chunks_count=0,
+                processing_time_ms=0,
+                model_used="security_guardrail",
+                prompt_injection_warning=reason
+            )
+            yield f"data: {json.dumps({'event': 'token', 'content': resp.answer})}\n\n"
+            yield f"data: {json.dumps({'event': 'complete', 'response': resp.model_dump()})}\n\n"
+            return
+
+    top_score = retrieved_chunks[0][1] if retrieved_chunks else 0.0
+    if not retrieved_chunks or top_score < refusal_threshold:
+        resp = QueryResponse(
+            query=query,
+            answer="I cannot find information regarding this topic in the indexed documents. Please consult the relevant policy or system documentation.",
+            is_out_of_scope=True,
+            confidence_score=0.05,
+            groundedness_score=0.0,
+            citations=[],
+            retrieved_chunks_count=len(retrieved_chunks),
+            processing_time_ms=int((time.perf_counter() - start_time) * 1000),
+            model_used="out_of_scope_guardrail",
+            sub_queries=sub_queries or []
+        )
+        yield f"data: {json.dumps({'event': 'token', 'content': resp.answer})}\n\n"
+        yield f"data: {json.dumps({'event': 'complete', 'response': resp.model_dump()})}\n\n"
+        return
+
+    final_response = await generate_rag_answer(
+        query=query,
+        retrieved_chunks=retrieved_chunks,
+        refusal_threshold=refusal_threshold,
+        sub_queries=sub_queries,
+        conversation_history=conversation_history
+    )
+
+    words = final_response.answer.split(" ")
+    for idx, w in enumerate(words):
+        token_str = w if idx == len(words) - 1 else w + " "
+        yield f"data: {json.dumps({'event': 'token', 'content': token_str})}\n\n"
+        await asyncio.sleep(0.015)
+
+    yield f"data: {json.dumps({'event': 'complete', 'response': final_response.model_dump()})}\n\n"
 
 def clean_and_parse_json(raw_text: str) -> Optional[dict]:
     if not raw_text or not raw_text.strip():

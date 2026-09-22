@@ -62,14 +62,21 @@ Blind character chunking splits paragraphs across sentences, causing loss of cri
 - Retains section titles and parent headings as searchable metadata on every chunk.
 - Maintains a 40-word sliding boundary overlap for sections exceeding the 250-word target window.
 
-### 3. Strict Hallucination Refusal Guardrail
-When a question is outside the scope of indexed documents (e.g., asking for baking recipes or unrelated topics), standard LLMs often fabricate believable answers. Our retrieval gate checks maximum BM25 and cosine similarity scores: if neither keyword nor semantic signal meets the threshold, the system immediately returns an out-of-scope refusal response without invoking generative completion.
+### 3. 2nd-Stage Cross-Encoder Reranker
+Hybrid retrieval fetches top candidate chunks via Reciprocal Rank Fusion (RRF). A 2nd-stage cross-attention reranker evaluates fine-grained token MaxSim coverage, term proximity windows, exact phrase matches, and heading alignment, re-ranking candidate passages before LLM context construction to maximize Precision@K and minimize noise.
 
-### 4. Citation Verification Engine
-Every claim references source chunks using bracket notation (`[1]`, `[2]`). The citation verifier inspects each cited excerpt against the raw source text:
-- Verifies exact substring match.
-- Checks 4-word shingle overlap ratio ($>70\%$ for partial match, $>90\%$ for exact match).
-- Returns verification status (`verified`, `partial_match`, `unverified`) with exact page and section coordinates.
+### 4. Multi-Provider Inference & Real-Time SSE Token Streaming
+An extensible provider layer supports Google Gemini API (`gemini-2.0-flash`), OpenAI (`gpt-4o-mini`), local Ollama (`qwen2.5-coder`), and deterministic extractive fallback. Real-time token streaming (`POST /api/v1/query/stream`) delivers sub-second Time-to-First-Token via Server-Sent Events alongside verified citations and groundedness metrics.
+
+### 5. Document-Level ACLs, Async Ingestion & Tabular Data
+- **Security Tags & ACLs**: Documents and chunks support classification tags (`public`, `internal`, `confidential`, `executive`) enforced at retrieval time.
+- **Asynchronous Ingestion Queue**: Large documents and spreadsheets (`POST /api/v1/documents/upload/async`) return HTTP 202 immediately with job progress tracking (`GET /api/v1/documents/jobs/{job_id}`).
+- **Tabular Data Support**: `.csv` and `.tsv` files are parsed into structured markdown tables and preserved atomically across chunk boundaries.
+
+### 6. Strict Hallucination Refusal & RAG Triad Metrics
+- **Refusal Guardrail**: Out-of-scope inquiries are refused prior to generation if retrieval signal falls below threshold.
+- **Citation Verifier**: Exact quote substring verification and 4-word shingle overlap checks (>70% partial, >90% verified).
+- **RAG Triad Metrics**: Every query and evaluation benchmark calculates Context Relevance, Faithfulness/Groundedness, and Answer Relevance.
 
 ---
 
@@ -111,4 +118,4 @@ Run the test suite verifying chunking, retrieval, API contracts, citation verifi
 ```bash
 pytest -v
 ```
-All 27 unit and integration tests passing.
+All 34 unit and integration tests passing.
