@@ -35,17 +35,58 @@ def list_threads(
                 ).fetchone()
                 if not mem:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this workspace.")
-        rows = conn.execute("""
-            SELECT 
-                t.id, t.title, t.created_at, t.updated_at, t.workspace_id,
-                COUNT(m.id) as message_count,
-                COALESCE(SUM(CASE WHEN m.citations_json IS NOT NULL AND m.citations_json != '[]' THEN 1 ELSE 0 END), 0) as citations_count
-            FROM threads t
-            LEFT JOIN thread_messages m ON t.id = m.thread_id
-            WHERE t.workspace_id = ? OR t.workspace_id IS NULL
-            GROUP BY t.id
-            ORDER BY t.updated_at DESC
-        """, (active_ws,)).fetchall()
+        if active_ws == "ws_default":
+            if user:
+                if user.get("is_superuser"):
+                    rows = conn.execute("""
+                        SELECT 
+                            t.id, t.title, t.created_at, t.updated_at, t.workspace_id,
+                            COUNT(m.id) as message_count,
+                            COALESCE(SUM(CASE WHEN m.citations_json IS NOT NULL AND m.citations_json != '[]' THEN 1 ELSE 0 END), 0) as citations_count
+                        FROM threads t
+                        LEFT JOIN thread_messages m ON t.id = m.thread_id
+                        WHERE t.workspace_id = 'ws_default' OR t.workspace_id IS NULL
+                        GROUP BY t.id
+                        ORDER BY t.updated_at DESC
+                    """).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT 
+                            t.id, t.title, t.created_at, t.updated_at, t.workspace_id,
+                            COUNT(m.id) as message_count,
+                            COALESCE(SUM(CASE WHEN m.citations_json IS NOT NULL AND m.citations_json != '[]' THEN 1 ELSE 0 END), 0) as citations_count
+                        FROM threads t
+                        LEFT JOIN thread_messages m ON t.id = m.thread_id
+                        WHERE (t.workspace_id = 'ws_default' OR t.workspace_id IS NULL)
+                          AND (t.user_id = ? OR t.user_id IS NULL)
+                        GROUP BY t.id
+                        ORDER BY t.updated_at DESC
+                    """, (user["id"],)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT 
+                        t.id, t.title, t.created_at, t.updated_at, t.workspace_id,
+                        COUNT(m.id) as message_count,
+                        COALESCE(SUM(CASE WHEN m.citations_json IS NOT NULL AND m.citations_json != '[]' THEN 1 ELSE 0 END), 0) as citations_count
+                    FROM threads t
+                    LEFT JOIN thread_messages m ON t.id = m.thread_id
+                    WHERE (t.workspace_id = 'ws_default' OR t.workspace_id IS NULL)
+                      AND t.user_id IS NULL
+                    GROUP BY t.id
+                    ORDER BY t.updated_at DESC
+                """).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT 
+                    t.id, t.title, t.created_at, t.updated_at, t.workspace_id,
+                    COUNT(m.id) as message_count,
+                    COALESCE(SUM(CASE WHEN m.citations_json IS NOT NULL AND m.citations_json != '[]' THEN 1 ELSE 0 END), 0) as citations_count
+                FROM threads t
+                LEFT JOIN thread_messages m ON t.id = m.thread_id
+                WHERE t.workspace_id = ?
+                GROUP BY t.id
+                ORDER BY t.updated_at DESC
+            """, (active_ws,)).fetchall()
 
     results = []
     for r in rows:
@@ -63,18 +104,20 @@ def list_threads(
 @router.post("", response_model=ResearchThread, status_code=status.HTTP_201_CREATED)
 def create_thread(
     req: ThreadCreateRequest,
-    x_workspace_id: Optional[str] = Header(None, alias="X-Workspace-Id")
+    x_workspace_id: Optional[str] = Header(None, alias="X-Workspace-Id"),
+    user: Optional[dict] = Depends(get_optional_user)
 ):
     active_ws = req.workspace_id or x_workspace_id or "ws_default"
     thread_id = f"th_{uuid.uuid4().hex[:12]}"
     now = utc_now_iso()
     title = req.title.strip() if req.title and req.title.strip() else "New Investigation"
+    user_id = user["id"] if user else None
 
     with get_db() as conn:
         conn.execute("""
-            INSERT INTO threads (id, workspace_id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (thread_id, active_ws, title, now, now))
+            INSERT INTO threads (id, workspace_id, user_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (thread_id, active_ws, user_id, title, now, now))
 
     record_audit_event(
         action="thread_create",

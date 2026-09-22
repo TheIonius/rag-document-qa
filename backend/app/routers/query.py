@@ -452,13 +452,42 @@ def get_query_history(
                 if not mem:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this workspace.")
 
-        rows = conn.execute("""
-            SELECT id, query, timestamp, answer, citations_json, confidence, is_out_of_scope, duration_ms, model_used
-            FROM query_logs
-            WHERE (workspace_id = ? OR (workspace_id IS NULL AND ? = 'ws_default'))
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (active_ws, active_ws, limit)).fetchall()
+        if active_ws == "ws_default":
+            if user:
+                if user.get("is_superuser"):
+                    rows = conn.execute("""
+                        SELECT id, query, timestamp, answer, citations_json, confidence, is_out_of_scope, duration_ms, model_used
+                        FROM query_logs
+                        WHERE workspace_id = 'ws_default' OR workspace_id IS NULL
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    """, (limit,)).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT id, query, timestamp, answer, citations_json, confidence, is_out_of_scope, duration_ms, model_used
+                        FROM query_logs
+                        WHERE (workspace_id = 'ws_default' OR workspace_id IS NULL)
+                          AND (user_id = ? OR user_id IS NULL)
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    """, (user["id"], limit)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT id, query, timestamp, answer, citations_json, confidence, is_out_of_scope, duration_ms, model_used
+                    FROM query_logs
+                    WHERE (workspace_id = 'ws_default' OR workspace_id IS NULL)
+                      AND user_id IS NULL
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                """, (limit,)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT id, query, timestamp, answer, citations_json, confidence, is_out_of_scope, duration_ms, model_used
+                FROM query_logs
+                WHERE workspace_id = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (active_ws, limit)).fetchall()
 
         history = []
         for r in rows:

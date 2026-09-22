@@ -403,3 +403,32 @@ def test_concurrent_search_during_reindex():
         f_search1.result()
         f_search2.result()
         f_reindex.result()
+
+def test_guest_isolation_from_authenticated_user_records(client):
+    # 1. Register an authenticated user
+    res = client.post("/api/v1/auth/register", json={
+        "email": "private_analyst@company.com",
+        "password": "Password123!",
+        "full_name": "Private Analyst"
+    })
+    assert res.status_code == 201
+    token = res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 2. User creates a thread in ws_default
+    th_res = client.post(
+        "/api/v1/threads",
+        json={"title": "Confidential Investigation Thread"},
+        headers=headers
+    )
+    assert th_res.status_code == 201
+    th_id = th_res.json()["id"]
+
+    # 3. User lists threads -> sees their thread
+    user_threads = client.get("/api/v1/threads", headers=headers).json()
+    assert any(t["id"] == th_id for t in user_threads)
+
+    # 4. Guest (unauthenticated, logged out) lists threads in ws_default -> MUST NOT see user's thread
+    guest_threads = client.get("/api/v1/threads").json()
+    assert not any(t["id"] == th_id for t in guest_threads)
+

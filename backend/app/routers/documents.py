@@ -46,14 +46,46 @@ def list_documents(
                 if not mem:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this workspace.")
 
-        rows = conn.execute("""
-            SELECT id, filename, title, file_type, file_size, page_count, chunk_count,
-                   created_at, collection, workspace_id, version, sha256_checksum,
-                   status, effective_from, effective_until, uploaded_by_id, security_tags
-            FROM documents
-            WHERE (workspace_id = ? OR (workspace_id IS NULL AND ? = 'ws_default'))
-            ORDER BY created_at DESC
-        """, (active_ws, active_ws)).fetchall()
+        if active_ws == "ws_default":
+            if user:
+                if user.get("is_superuser"):
+                    rows = conn.execute("""
+                        SELECT id, filename, title, file_type, file_size, page_count, chunk_count,
+                               created_at, collection, workspace_id, version, sha256_checksum,
+                               status, effective_from, effective_until, uploaded_by_id, security_tags
+                        FROM documents
+                        WHERE workspace_id = 'ws_default' OR workspace_id IS NULL
+                        ORDER BY created_at DESC
+                    """).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT id, filename, title, file_type, file_size, page_count, chunk_count,
+                               created_at, collection, workspace_id, version, sha256_checksum,
+                               status, effective_from, effective_until, uploaded_by_id, security_tags
+                        FROM documents
+                        WHERE (workspace_id = 'ws_default' OR workspace_id IS NULL)
+                          AND (uploaded_by_id = ? OR uploaded_by_id IS NULL)
+                        ORDER BY created_at DESC
+                    """, (user["id"],)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT id, filename, title, file_type, file_size, page_count, chunk_count,
+                           created_at, collection, workspace_id, version, sha256_checksum,
+                           status, effective_from, effective_until, uploaded_by_id, security_tags
+                    FROM documents
+                    WHERE (workspace_id = 'ws_default' OR workspace_id IS NULL)
+                      AND uploaded_by_id IS NULL
+                    ORDER BY created_at DESC
+                """).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT id, filename, title, file_type, file_size, page_count, chunk_count,
+                       created_at, collection, workspace_id, version, sha256_checksum,
+                       status, effective_from, effective_until, uploaded_by_id, security_tags
+                FROM documents
+                WHERE workspace_id = ?
+                ORDER BY created_at DESC
+            """, (active_ws,)).fetchall()
         return [DocumentMetadata.model_validate(dict(r)) for r in rows]
 
 @router.get("/jobs/{job_id}", response_model=IngestionJobResponse)

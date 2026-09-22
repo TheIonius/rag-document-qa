@@ -335,8 +335,10 @@ async function loadWorkspaces() {
     const workspaces = await res.json();
 
     if (workspaces.length > 0) {
-      if (!currentWorkspaceId || !workspaces.some(w => w.id === currentWorkspaceId)) {
-        currentWorkspaceId = workspaces[0].id;
+      // Prioritize user's private tenant workspace over shared demo sandbox
+      const privateWs = workspaces.find(w => w.id !== "ws_default");
+      if (!currentWorkspaceId || currentWorkspaceId === "ws_default" || !workspaces.some(w => w.id === currentWorkspaceId)) {
+        currentWorkspaceId = privateWs ? privateWs.id : workspaces[0].id;
         localStorage.setItem("cortex_workspace_id", currentWorkspaceId);
       }
       selector.innerHTML = `
@@ -365,6 +367,7 @@ function changeActiveWorkspace(wsId) {
   }
   currentWorkspaceId = wsId;
   localStorage.setItem("cortex_workspace_id", wsId);
+  startNewInvestigation();
   loadDocuments();
   loadThreads();
   updateHistoryBadge();
@@ -414,6 +417,7 @@ async function quickRegisterDemoUser() {
 
     localStorage.setItem("cortex_auth_token", data.access_token);
     currentUser = data.user;
+    startNewInvestigation();
     updateUserAuthUI();
     await loadWorkspaces();
     loadDocuments();
@@ -592,6 +596,7 @@ async function handleAuthSubmit(e) {
     currentUser = data.user;
     if (passwordInput) passwordInput.value = "";
     if (errBanner) errBanner.style.display = "none";
+    startNewInvestigation();
     updateUserAuthUI();
     await loadWorkspaces();
     loadDocuments();
@@ -610,11 +615,18 @@ function handleSignOut() {
   currentUser = null;
   currentWorkspaceId = "ws_default";
   localStorage.setItem("cortex_workspace_id", "ws_default");
+  startNewInvestigation();
+  closeSplitReader();
+  closeAuditModal();
+  closeCompareModal();
+  closeEngineModal();
+  closeInspectorModal();
   updateUserAuthUI();
   closeAuthModal();
   loadWorkspaces();
   loadDocuments();
   loadThreads();
+  updateHistoryBadge();
 }
 
 async function sendFeedback(btn, isPositive, queryLogId) {
