@@ -432,3 +432,61 @@ def test_guest_isolation_from_authenticated_user_records(client):
     guest_threads = client.get("/api/v1/threads").json()
     assert not any(t["id"] == th_id for t in guest_threads)
 
+def test_workspace_members_collaboration_lifecycle(client):
+    # 1. Register Owner and create a team workspace
+    owner_res = client.post("/api/v1/auth/register", json={
+        "email": "team_lead@enterprise.com",
+        "password": "Password123!",
+        "full_name": "Team Lead"
+    })
+    assert owner_res.status_code == 201
+    owner_token = owner_res.json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+    ws_res = client.post(
+        "/api/v1/workspaces",
+        json={"name": "Compliance Operations", "slug": "compliance-ops"},
+        headers=owner_headers
+    )
+    assert ws_res.status_code == 201
+    ws_id = ws_res.json()["id"]
+
+    # 2. Register Teammate
+    teammate_res = client.post("/api/v1/auth/register", json={
+        "email": "analyst_colleague@enterprise.com",
+        "password": "Password123!",
+        "full_name": "Analyst Colleague"
+    })
+    assert teammate_res.status_code == 201
+    teammate_token = teammate_res.json()["access_token"]
+    teammate_headers = {"Authorization": f"Bearer {teammate_token}"}
+
+    # 3. Owner adds Teammate to workspace
+    add_res = client.post(
+        f"/api/v1/workspaces/{ws_id}/members",
+        json={"email": "analyst_colleague@enterprise.com", "role": "member"},
+        headers=owner_headers
+    )
+    assert add_res.status_code == 201
+    mem_data = add_res.json()
+    assert mem_data["email"] == "analyst_colleague@enterprise.com"
+    assert mem_data["role"] == "member"
+    member_id = mem_data["id"]
+
+    # 4. Teammate can now access workspace documents and members list
+    members_res = client.get(f"/api/v1/workspaces/{ws_id}/members", headers=teammate_headers)
+    assert members_res.status_code == 200
+    members_list = members_res.json()
+    assert len(members_list) == 2
+    assert any(m["email"] == "team_lead@enterprise.com" and m["role"] == "owner" for m in members_list)
+    assert any(m["email"] == "analyst_colleague@enterprise.com" and m["role"] == "member" for m in members_list)
+
+    # 5. Owner removes Teammate
+    del_res = client.delete(f"/api/v1/workspaces/{ws_id}/members/{member_id}", headers=owner_headers)
+    assert del_res.status_code == 200
+
+    # 6. Teammate is now denied access (403)
+    denied_res = client.get(f"/api/v1/workspaces/{ws_id}/members", headers=teammate_headers)
+    assert denied_res.status_code == 403
+
+

@@ -268,7 +268,23 @@ class WorkspaceCreateRequest(BaseModel):
 
 class WorkspaceMemberAdd(BaseModel):
     email: str
-    role: str = "viewer"
+    role: str = "member"
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        cleaned = v.strip().lower()
+        if not cleaned or not EMAIL_REGEX.match(cleaned):
+            raise ValueError("Please provide a valid corporate or personal email address.")
+        return cleaned
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        valid_roles = ("admin", "editor", "member", "viewer")
+        if v.lower() not in valid_roles:
+            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}")
+        return v.lower()
 
 class WorkspaceMemberResponse(BaseModel):
     id: str

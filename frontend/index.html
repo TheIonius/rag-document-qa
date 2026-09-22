@@ -39,6 +39,16 @@
             <option value="ws_default">Demo Sandbox (Shared)</option>
             <option value="__auth_teaser__" disabled>+ Private Tenant Workspace (Sign in to unlock)</option>
           </select>
+          <button type="button" id="btn-manage-members" class="btn-manage-members" onclick="openMembersModal()" title="Manage workspace team members and permissions" style="display:none;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span>Team</span>
+            <span id="workspace-members-badge" class="members-badge-count" style="display:none;">0</span>
+          </button>
         </div>
 
         <button type="button" id="btn-auth-profile" class="btn btn-ghost" onclick="openAuthModal()" title="Manage account and identity">
@@ -564,6 +574,67 @@
               <button type="button" id="btn-quick-demo-account" class="btn btn-secondary btn-block" onclick="quickRegisterDemoUser()">
                 Create Instant Demo Account
               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workspace Members & Access Control Modal -->
+    <div id="workspace-members-modal" class="modal-backdrop" onclick="closeMembersModalOnBackdrop(event)" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="members-modal-title">
+      <div class="members-modal-dialog" onclick="event.stopPropagation()">
+        <div class="modal-sheet-header">
+          <div>
+            <span class="sheet-tag">Multi-Tenant Collaboration</span>
+            <h2 id="members-modal-title" class="sheet-title">Workspace Team & Access Control</h2>
+            <p id="members-modal-subtitle" class="modal-subtitle">Manage collaborative permissions and teammate roles for this tenant partition.</p>
+          </div>
+          <button type="button" class="modal-close-btn" onclick="closeMembersModal()" title="Close (Esc)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="members-modal-body">
+          <div id="members-alert-banner" class="members-alert-banner" style="display:none;"></div>
+
+          <!-- Invite Form (Accessible for Owner / Admin) -->
+          <div id="members-invite-section" class="members-invite-section">
+            <h3 class="members-section-heading">Invite Colleague to Workspace</h3>
+            <form id="members-invite-form" onsubmit="handleAddWorkspaceMember(event)">
+              <div class="members-invite-row">
+                <div class="form-group form-group-flex">
+                  <label for="invite-member-email" class="form-label">Email Address</label>
+                  <input type="email" id="invite-member-email" class="form-input" placeholder="colleague@enterprise.com" required autocomplete="off">
+                </div>
+                <div class="form-group form-group-role">
+                  <label for="invite-member-role" class="form-label">Access Role</label>
+                  <select id="invite-member-role" class="form-input form-select">
+                    <option value="member" selected>Member (Query & Upload)</option>
+                    <option value="admin">Admin (Manage & Invite)</option>
+                    <option value="viewer">Viewer (Read-Only)</option>
+                  </select>
+                </div>
+                <div class="form-group form-group-btn">
+                  <button type="submit" id="btn-submit-invite-member" class="btn btn-primary btn-sm">
+                    <span>Add Member</span>
+                  </button>
+                </div>
+              </div>
+              <span class="field-hint">Colleagues must have a registered account. They gain access immediately upon addition.</span>
+            </form>
+          </div>
+
+          <!-- Current Members Roster -->
+          <div class="members-roster-section">
+            <div class="members-roster-header">
+              <span class="members-section-heading">Workspace Roster</span>
+              <span id="members-roster-count" class="members-badge-count">1 member</span>
+            </div>
+            <div id="members-roster-list" class="members-roster-list">
+              <!-- Populated dynamically via app.js -->
             </div>
           </div>
         </div>

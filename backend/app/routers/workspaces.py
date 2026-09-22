@@ -168,6 +168,17 @@ def add_workspace_member(
             VALUES (?, ?, ?, ?, ?)
         """, (mem_id, user_id, workspace_id, req.role, now))
 
+    caller_user = admin_auth.get("user", {})
+    record_audit_event(
+        action="workspace_member_add",
+        resource_type="workspace",
+        resource_id=workspace_id,
+        workspace_id=workspace_id,
+        actor_id=caller_user.get("id"),
+        actor_email=caller_user.get("email"),
+        details={"member_email": email, "role": req.role}
+    )
+
     return WorkspaceMemberResponse(
         id=mem_id,
         user_id=user_id,
@@ -177,3 +188,34 @@ def add_workspace_member(
         full_name=user_row["full_name"],
         created_at=now
     )
+
+@router.delete("/{workspace_id}/members/{member_id}", status_code=status.HTTP_200_OK)
+def remove_workspace_member(
+    workspace_id: str,
+    member_id: str,
+    admin_auth: dict = Depends(require_role("admin"))
+):
+    caller_user = admin_auth.get("user", {})
+    with get_db() as conn:
+        mem = conn.execute("""
+            SELECT id, user_id, role FROM workspace_memberships WHERE id = ? AND workspace_id = ?
+        """, (member_id, workspace_id)).fetchone()
+        if not mem:
+            raise HTTPException(status_code=404, detail="Workspace membership record not found.")
+        if mem["role"] == "owner" and not caller_user.get("is_superuser"):
+            raise HTTPException(status_code=400, detail="Cannot remove workspace owner.")
+        if mem["user_id"] == caller_user.get("id"):
+            raise HTTPException(status_code=400, detail="Cannot remove yourself from the workspace.")
+        conn.execute("DELETE FROM workspace_memberships WHERE id = ?", (member_id,))
+
+    record_audit_event(
+        action="workspace_member_remove",
+        resource_type="workspace",
+        resource_id=workspace_id,
+        workspace_id=workspace_id,
+        actor_id=caller_user.get("id"),
+        actor_email=caller_user.get("email"),
+        details={"removed_member_id": member_id}
+    )
+    return {"status": "success", "message": "Member successfully removed from workspace."}
+

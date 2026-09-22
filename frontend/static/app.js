@@ -100,6 +100,7 @@ function setupEventListeners() {
       closeInspectorModal();
       closeCompareModal();
       closeAuthModal();
+      closeMembersModal();
     }
   });
 
@@ -314,6 +315,8 @@ function updateUserAuthUI() {
     if (uploadZone) {
       uploadZone.title = "Documents uploaded in Guest Mode go into the public demo sandbox. Sign in to upload private documents with custom ACL security tags.";
     }
+    const btnManageMembers = document.getElementById("btn-manage-members");
+    if (btnManageMembers) btnManageMembers.style.display = "none";
   }
 }
 
@@ -349,6 +352,16 @@ async function loadWorkspaces() {
         `).join("")}
         <option value="__create_new__">+ Create New Workspace...</option>
       `;
+
+      const btnManageMembers = document.getElementById("btn-manage-members");
+      if (btnManageMembers) {
+        if (currentUser && currentWorkspaceId && currentWorkspaceId !== "ws_default") {
+          btnManageMembers.style.display = "inline-flex";
+          loadWorkspaceMembersCount();
+        } else {
+          btnManageMembers.style.display = "none";
+        }
+      }
     }
   } catch (e) {
     // Keep default option
@@ -367,6 +380,15 @@ function changeActiveWorkspace(wsId) {
   }
   currentWorkspaceId = wsId;
   localStorage.setItem("cortex_workspace_id", wsId);
+  const btnManageMembers = document.getElementById("btn-manage-members");
+  if (btnManageMembers) {
+    if (currentUser && wsId && wsId !== "ws_default") {
+      btnManageMembers.style.display = "inline-flex";
+      loadWorkspaceMembersCount();
+    } else {
+      btnManageMembers.style.display = "none";
+    }
+  }
   startNewInvestigation();
   loadDocuments();
   loadThreads();
@@ -392,6 +414,255 @@ async function createNewWorkspace(name) {
     loadThreads();
   } catch (e) {
     alert("Error creating workspace: " + e.message);
+  }
+}
+
+// Workspace Team Collaboration & Members Management
+
+async function loadWorkspaceMembersCount() {
+  if (!currentUser || !currentWorkspaceId || currentWorkspaceId === "ws_default") return;
+  try {
+    const res = await apiFetch(`/api/v1/workspaces/${currentWorkspaceId}/members`);
+    if (res.ok) {
+      const members = await res.json();
+      const badge = document.getElementById("workspace-members-badge");
+      if (badge) {
+        badge.textContent = members.length;
+        badge.style.display = "inline-block";
+      }
+    }
+  } catch (e) {
+    // Ignore background count failure
+  }
+}
+
+async function openMembersModal() {
+  if (!currentUser) {
+    openAuthModal();
+    return;
+  }
+  const modal = document.getElementById("workspace-members-modal");
+  if (!modal) return;
+
+  const selector = document.getElementById("workspace-select");
+  const wsName = selector && selector.selectedOptions && selector.selectedOptions[0]
+    ? selector.selectedOptions[0].textContent.trim()
+    : "Current Workspace";
+
+  const subtitle = document.getElementById("members-modal-subtitle");
+  if (subtitle) {
+    subtitle.textContent = `${wsName} · Manage collaborative access & roles`;
+  }
+
+  const alertBanner = document.getElementById("members-alert-banner");
+  if (alertBanner) {
+    alertBanner.style.display = "none";
+    alertBanner.textContent = "";
+  }
+
+  modal.style.display = "flex";
+  await loadWorkspaceMembers();
+}
+
+function closeMembersModal() {
+  const modal = document.getElementById("workspace-members-modal");
+  if (modal) modal.style.display = "none";
+  const alertBanner = document.getElementById("members-alert-banner");
+  if (alertBanner) {
+    alertBanner.style.display = "none";
+    alertBanner.textContent = "";
+  }
+}
+
+function closeMembersModalOnBackdrop(e) {
+  if (e && e.target && e.target.id === "workspace-members-modal") {
+    closeMembersModal();
+  }
+}
+
+async function loadWorkspaceMembers() {
+  const listEl = document.getElementById("members-roster-list");
+  const countEl = document.getElementById("members-roster-count");
+  const inviteSection = document.getElementById("members-invite-section");
+  if (!listEl) return;
+
+  if (currentWorkspaceId === "ws_default") {
+    if (inviteSection) inviteSection.style.display = "none";
+    listEl.innerHTML = `
+      <div class="members-empty-notice">
+        The Demo Sandbox is a shared public partition with anonymous evaluation privileges. Switch to your private tenant workspace or create a new team workspace to invite and manage members.
+      </div>
+    `;
+    if (countEl) countEl.textContent = "Public Sandbox";
+    return;
+  }
+
+  listEl.innerHTML = `<div class="compare-loading"><div class="spinner"></div><span>Loading active workspace members...</span></div>`;
+
+  try {
+    const res = await apiFetch(`/api/v1/workspaces/${currentWorkspaceId}/members`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to load workspace members");
+    }
+
+    const members = await res.json();
+    if (countEl) {
+      countEl.textContent = `${members.length} ${members.length === 1 ? 'member' : 'members'}`;
+    }
+    const badge = document.getElementById("workspace-members-badge");
+    if (badge) {
+      badge.textContent = members.length;
+      badge.style.display = "inline-block";
+    }
+
+    // Determine permissions of active user
+    const myMembership = members.find(m => m.user_id === currentUser?.id);
+    const canManage = currentUser?.is_superuser || (myMembership && (myMembership.role === "owner" || myMembership.role === "admin"));
+
+    if (inviteSection) {
+      inviteSection.style.display = canManage ? "block" : "none";
+    }
+
+    if (members.length === 0) {
+      listEl.innerHTML = `<div class="members-empty-notice">No members found in this workspace partition.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = members.map(m => {
+      const nameParts = (m.full_name || m.email).split(" ");
+      const initials = nameParts.length > 1
+        ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase()
+        : (m.full_name || m.email).slice(0, 2).toUpperCase();
+
+      const isSelf = currentUser && m.user_id === currentUser.id;
+      const isOwner = m.role === "owner";
+      const canRemove = canManage && !isOwner && !isSelf;
+
+      return `
+        <div class="member-item-card" id="member-card-${m.id}">
+          <div class="member-item-left">
+            <div class="member-avatar">${escapeHtml(initials)}</div>
+            <div class="member-info-col">
+              <div class="member-name-row">
+                <span class="member-display-name">${escapeHtml(m.full_name || m.email.split('@')[0])}</span>
+                ${isSelf ? '<span class="field-hint" style="margin:0; font-size:10px; color:var(--accent-blue);">(You)</span>' : ''}
+              </div>
+              <span class="member-email">${escapeHtml(m.email)}</span>
+            </div>
+          </div>
+          <div class="member-item-right">
+            <span class="member-role-tag ${m.role}">${escapeHtml(m.role)}</span>
+            ${canRemove ? `
+              <button type="button" class="btn-remove-member" onclick="handleRemoveWorkspaceMember('${m.id}', '${escapeHtml(m.full_name || m.email)}')" title="Remove member from workspace">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  } catch (err) {
+    listEl.innerHTML = `<div class="members-empty-notice" style="color:#dc2626;">Error loading members: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function handleAddWorkspaceMember(e) {
+  if (e) e.preventDefault();
+  const emailInput = document.getElementById("invite-member-email");
+  const roleSelect = document.getElementById("invite-member-role");
+  const submitBtn = document.getElementById("btn-submit-invite-member");
+  const alertBanner = document.getElementById("members-alert-banner");
+
+  if (!emailInput || !emailInput.value.trim()) return;
+  const email = emailInput.value.trim().toLowerCase();
+  const role = roleSelect ? roleSelect.value : "member";
+
+  const emailRegex = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9_.-]+\.[a-zA-Z0-9-.]+$/;
+  if (!emailRegex.test(email)) {
+    if (alertBanner) {
+      alertBanner.className = "members-alert-banner error";
+      alertBanner.textContent = "Please enter a valid corporate or personal email address (e.g. colleague@enterprise.com).";
+      alertBanner.style.display = "block";
+    }
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Adding...";
+  }
+
+  try {
+    const res = await apiFetch(`/api/v1/workspaces/${currentWorkspaceId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      let errorMsg = data.detail || "Failed to add workspace member";
+      if (Array.isArray(data.detail)) {
+        errorMsg = data.detail.map(d => (d.msg || JSON.stringify(d)).replace(/^Value error,\s*/i, "")).join("; ");
+      }
+      throw new Error(errorMsg);
+    }
+
+    if (alertBanner) {
+      alertBanner.className = "members-alert-banner success";
+      alertBanner.textContent = `${data.full_name || data.email} was successfully added as ${data.role}.`;
+      alertBanner.style.display = "block";
+    }
+    emailInput.value = "";
+    await loadWorkspaceMembers();
+
+  } catch (err) {
+    if (alertBanner) {
+      alertBanner.className = "members-alert-banner error";
+      alertBanner.textContent = err.message;
+      alertBanner.style.display = "block";
+    }
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Add Member";
+    }
+  }
+}
+
+async function handleRemoveWorkspaceMember(memberId, memberName) {
+  if (!confirm(`Are you sure you want to remove ${memberName} from this workspace? They will lose access to all documents and threads in this partition.`)) {
+    return;
+  }
+
+  const alertBanner = document.getElementById("members-alert-banner");
+  try {
+    const res = await apiFetch(`/api/v1/workspaces/${currentWorkspaceId}/members/${memberId}`, {
+      method: "DELETE"
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || "Failed to remove member");
+    }
+
+    if (alertBanner) {
+      alertBanner.className = "members-alert-banner success";
+      alertBanner.textContent = `${memberName} was removed from the workspace.`;
+      alertBanner.style.display = "block";
+    }
+    await loadWorkspaceMembers();
+
+  } catch (err) {
+    if (alertBanner) {
+      alertBanner.className = "members-alert-banner error";
+      alertBanner.textContent = err.message;
+      alertBanner.style.display = "block";
+    }
   }
 }
 
@@ -621,6 +892,7 @@ function handleSignOut() {
   closeCompareModal();
   closeEngineModal();
   closeInspectorModal();
+  closeMembersModal();
   updateUserAuthUI();
   closeAuthModal();
   loadWorkspaces();
