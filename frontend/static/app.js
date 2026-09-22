@@ -109,8 +109,24 @@ function setupEventListeners() {
       if (localStorage.getItem("cortex_sidebar_collapsed") === "true") {
         const layout = document.getElementById("workspace-layout");
         if (layout) layout.classList.add("sidebar-collapsed");
+        const toggleBtn = document.getElementById("btn-toggle-sidebar");
+        if (toggleBtn) {
+          toggleBtn.setAttribute("aria-expanded", "false");
+          toggleBtn.classList.remove("active");
+        }
       }
     } catch (e) {}
+  }
+
+  // Enable smooth horizontal wheel scrolling on scope chips
+  const scopeRow = document.getElementById("scope-chips");
+  if (scopeRow) {
+    scopeRow.addEventListener("wheel", (e) => {
+      if (e.deltaY !== 0 && scopeRow.scrollWidth > scopeRow.clientWidth) {
+        e.preventDefault();
+        scopeRow.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
   }
 
   // Responsive resize cleanup
@@ -672,6 +688,9 @@ function setCollectionFilter(colName) {
     const label = textSpan ? textSpan.textContent.trim() : p.textContent.trim();
     const isTarget = colName === "all" ? label === "All Collections" : label === colName;
     p.classList.toggle("active", isTarget);
+    if (isTarget) {
+      p.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    }
   });
 
   // 2. Update Active Scope Status Banner
