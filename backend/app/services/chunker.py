@@ -12,7 +12,9 @@ class Chunk:
         text: str,
         word_count: int,
         char_start: int,
-        char_end: int
+        char_end: int,
+        parent_chunk_id: Optional[str] = None,
+        parent_text: Optional[str] = None
     ):
         self.chunk_index = chunk_index
         self.section_title = section_title
@@ -21,6 +23,8 @@ class Chunk:
         self.word_count = word_count
         self.char_start = char_start
         self.char_end = char_end
+        self.parent_chunk_id = parent_chunk_id
+        self.parent_text = parent_text
 
 def chunk_document(
     parsed: ParsedDocument,
@@ -35,8 +39,11 @@ def chunk_document(
         sections = split_markdown_sections(parsed.raw_text)
         current_offset = 0
 
-        for sec_title, sec_text in sections:
+        for sec_idx, (sec_title, sec_text) in enumerate(sections):
             sec_words = sec_text.split()
+            parent_id = f"parent_sec_{sec_idx}"
+            parent_full_text = sec_text.strip()
+
             if len(sec_words) <= target_words + (overlap_words // 2):
                 if sec_text.strip():
                     char_len = len(sec_text)
@@ -47,14 +54,17 @@ def chunk_document(
                         text=sec_text.strip(),
                         word_count=len(sec_words),
                         char_start=current_offset,
-                        char_end=current_offset + char_len
+                        char_end=current_offset + char_len,
+                        parent_chunk_id=parent_id,
+                        parent_text=parent_full_text
                     ))
                     chunk_counter += 1
                     current_offset += char_len
             else:
-                # Sub-chunk long section with sliding window
+                # Sub-chunk long section with sliding window, retaining parent reference
                 sub_chunks = sliding_window_chunk(
-                    sec_text, sec_title, 1, target_words, overlap_words, current_offset, chunk_counter
+                    sec_text, sec_title, 1, target_words, overlap_words, current_offset, chunk_counter,
+                    parent_chunk_id=parent_id, parent_text=parent_full_text
                 )
                 chunks.extend(sub_chunks)
                 chunk_counter += len(sub_chunks)
@@ -67,9 +77,10 @@ def chunk_document(
             if not page_text.strip():
                 continue
 
-            # Detect any section headers in page text
             sec_title = extract_header_from_block(page_text)
             page_words = page_text.split()
+            parent_id = f"parent_p{page_num}"
+            parent_full_text = page_text.strip()
 
             if len(page_words) <= target_words + (overlap_words // 2):
                 char_len = len(page_text)
@@ -80,14 +91,17 @@ def chunk_document(
                     text=page_text.strip(),
                     word_count=len(page_words),
                     char_start=current_offset,
-                    char_end=current_offset + char_len
+                    char_end=current_offset + char_len,
+                    parent_chunk_id=parent_id,
+                    parent_text=parent_full_text
                 ))
                 chunk_counter += 1
                 current_offset += char_len
             else:
                 sub_chunks = sliding_window_chunk(
                     page_text, sec_title or f"Page {page_num}", page_num,
-                    target_words, overlap_words, current_offset, chunk_counter
+                    target_words, overlap_words, current_offset, chunk_counter,
+                    parent_chunk_id=parent_id, parent_text=parent_full_text
                 )
                 chunks.extend(sub_chunks)
                 chunk_counter += len(sub_chunks)
@@ -166,7 +180,9 @@ def sliding_window_chunk(
     target_words: int,
     overlap_words: int,
     base_offset: int,
-    start_index: int
+    start_index: int,
+    parent_chunk_id: Optional[str] = None,
+    parent_text: Optional[str] = None
 ) -> List[Chunk]:
     paragraphs = text.split("\n\n")
     chunks = []
@@ -192,7 +208,9 @@ def sliding_window_chunk(
                     text=chunk_text,
                     word_count=len(current_words),
                     char_start=base_offset + current_para_start,
-                    char_end=base_offset + current_para_start + len(chunk_text)
+                    char_end=base_offset + current_para_start + len(chunk_text),
+                    parent_chunk_id=parent_chunk_id,
+                    parent_text=parent_text
                 ))
                 chunk_idx += 1
                 current_words = []
@@ -205,7 +223,9 @@ def sliding_window_chunk(
                     text=p_clean,
                     word_count=len(p_words),
                     char_start=base_offset + current_para_start,
-                    char_end=base_offset + current_para_start + len(p_clean)
+                    char_end=base_offset + current_para_start + len(p_clean),
+                    parent_chunk_id=parent_chunk_id,
+                    parent_text=parent_text
                 ))
                 chunk_idx += 1
             else:
@@ -219,7 +239,9 @@ def sliding_window_chunk(
                         text=tbl_slice,
                         word_count=len(s_words),
                         char_start=base_offset + current_para_start,
-                        char_end=base_offset + current_para_start + len(tbl_slice)
+                        char_end=base_offset + current_para_start + len(tbl_slice),
+                        parent_chunk_id=parent_chunk_id,
+                        parent_text=parent_text
                     ))
                     chunk_idx += 1
             continue
@@ -236,7 +258,9 @@ def sliding_window_chunk(
                     text=chunk_text,
                     word_count=len(current_words),
                     char_start=base_offset + current_para_start,
-                    char_end=base_offset + current_para_start + len(chunk_text)
+                    char_end=base_offset + current_para_start + len(chunk_text),
+                    parent_chunk_id=parent_chunk_id,
+                    parent_text=parent_text
                 ))
                 chunk_idx += 1
 
@@ -261,7 +285,9 @@ def sliding_window_chunk(
                         text=sub_text,
                         word_count=len(slice_words),
                         char_start=base_offset,
-                        char_end=base_offset + len(sub_text)
+                        char_end=base_offset + len(sub_text),
+                        parent_chunk_id=parent_chunk_id,
+                        parent_text=parent_text
                     ))
                     chunk_idx += 1
                 current_words = []
@@ -277,7 +303,9 @@ def sliding_window_chunk(
             text=chunk_text,
             word_count=len(current_words),
             char_start=base_offset,
-            char_end=base_offset + len(chunk_text)
+            char_end=base_offset + len(chunk_text),
+            parent_chunk_id=parent_chunk_id,
+            parent_text=parent_text
         ))
 
     return chunks

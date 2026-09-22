@@ -59,6 +59,16 @@ BENCHMARK_CASES = [
     }
 ]
 
+@router.get("/synthetic")
+def get_synthetic_qa_cases(
+    workspace_id: Optional[str] = Query(None),
+    x_workspace_id: Optional[str] = Header(None, alias="X-Workspace-Id")
+):
+    """Retrieves automatically generated synthetic Q&A verification pairs for active workspace."""
+    active_ws = workspace_id or x_workspace_id or "ws_default"
+    from app.services.synthetic_qa import get_synthetic_benchmarks
+    return get_synthetic_benchmarks(active_ws)
+
 @router.get("/benchmark", response_model=List[EvaluationBenchmarkResult])
 async def run_evaluation_benchmark(
     workspace_id: Optional[str] = Query(None),
@@ -69,7 +79,15 @@ async def run_evaluation_benchmark(
     total_latency = 0
     total_groundedness = 0.0
 
-    for test_case in BENCHMARK_CASES:
+    all_cases = list(BENCHMARK_CASES)
+    try:
+        from app.services.synthetic_qa import get_synthetic_benchmarks
+        synth_cases = get_synthetic_benchmarks(active_ws)
+        all_cases.extend(synth_cases)
+    except Exception as e:
+        print(f"[Evaluation Warning] Could not load synthetic benchmarks: {e}")
+
+    for test_case in all_cases:
         req = QueryRequest(query=test_case["query"], top_k=4, workspace_id=active_ws)
         res = await execute_rag_query(req, persist_thread=False)
 

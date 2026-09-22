@@ -107,6 +107,8 @@ def init_db(db_path: Path = None):
             char_start INTEGER NOT NULL,
             char_end INTEGER NOT NULL,
             embedding_blob BLOB,
+            parent_chunk_id TEXT,
+            parent_text TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
@@ -193,12 +195,25 @@ def init_db(db_path: Path = None):
             results_json TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS synthetic_benchmarks (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            document_id TEXT NOT NULL,
+            query TEXT NOT NULL,
+            expected_doc TEXT NOT NULL,
+            expected_fact TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_query_timestamp ON query_logs(timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_thread_messages_thread ON thread_messages(thread_id, created_at ASC);
         CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_doc ON ingestion_jobs(document_id);
+        CREATE INDEX IF NOT EXISTS idx_synth_bench_doc ON synthetic_benchmarks(document_id);
+        CREATE INDEX IF NOT EXISTS idx_synth_bench_ws ON synthetic_benchmarks(workspace_id);
 
         -- Enforce immutable, append-only compliance for audit ledger at database engine level
         CREATE TRIGGER IF NOT EXISTS trg_audit_events_no_update
@@ -266,6 +281,8 @@ def init_db(db_path: Path = None):
             ("documents", "security_tags TEXT DEFAULT '[\"public\"]'"),
             ("chunks", "embedding_blob BLOB"),
             ("chunks", "embedding_model TEXT DEFAULT 'BAAI/bge-small-en-v1.5'"),
+            ("chunks", "parent_chunk_id TEXT"),
+            ("chunks", "parent_text TEXT"),
             ("query_logs", "workspace_id TEXT"),
             ("query_logs", "user_id TEXT"),
             ("threads", "workspace_id TEXT"),

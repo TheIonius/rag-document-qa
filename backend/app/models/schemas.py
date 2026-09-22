@@ -35,6 +35,8 @@ class ChunkDetail(BaseModel):
     word_count: int
     char_start: int
     char_end: int
+    parent_chunk_id: Optional[str] = None
+    parent_text: Optional[str] = None
 
 class Citation(BaseModel):
     citation_index: int = Field(..., description="[1], [2] citation reference index")

@@ -95,14 +95,26 @@ async def generate_rag_answer(
             sub_queries=sub_queries or []
         )
 
-    # format context blocks
+    # format context blocks with Parent-Child Small-to-Big Context Expansion
     context_blocks = []
     chunk_map: Dict[int, IndexedChunk] = {}
+    seen_parent_ids = set()
 
     for idx, (chunk, score) in enumerate(retrieved_chunks, start=1):
         chunk_map[idx] = chunk
+        
+        # Parent-Child Small-to-Big Context Expansion:
+        # Feed parent context block to LLM while avoiding duplicate context if multiple children match
+        if chunk.parent_chunk_id:
+            if chunk.parent_chunk_id in seen_parent_ids:
+                continue
+            seen_parent_ids.add(chunk.parent_chunk_id)
+            context_text = chunk.parent_text or chunk.text
+        else:
+            context_text = chunk.text
+
         header = f"[{idx}] Document: {chunk.document_title} | Section: {chunk.section_title or 'General'} | Page: {chunk.page_number}"
-        context_blocks.append(f"{header}\n{sanitize_document_context(chunk.text)}")
+        context_blocks.append(f"{header}\n{sanitize_document_context(context_text)}")
 
     full_context_str = "\n\n---\n\n".join(context_blocks)
 

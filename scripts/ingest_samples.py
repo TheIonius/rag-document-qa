@@ -76,17 +76,26 @@ def ingest_all_documents():
                 blob = embeddings[idx].tobytes() if idx < len(embeddings) else None
                 chunk_records.append((
                     chunk_id, doc_id, c.chunk_index, c.section_title,
-                    c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob, now
+                    c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob,
+                    getattr(c, "parent_chunk_id", None), getattr(c, "parent_text", None), now
                 ))
 
             conn.executemany("""
                 INSERT INTO chunks (
                     id, document_id, chunk_index, section_title,
-                    page_number, text, word_count, char_start, char_end, embedding_blob, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    page_number, text, word_count, char_start, char_end, embedding_blob,
+                    parent_chunk_id, parent_text, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, chunk_records)
 
             total_chunks_indexed += len(chunks)
+
+        # Auto-generate synthetic QA verification pairs for sample docs after transaction commits
+        try:
+            from app.services.synthetic_qa import generate_synthetic_qa_pairs
+            generate_synthetic_qa_pairs(doc_id, parsed.title, chunks, "ws_default")
+        except Exception as e:
+            print(f"[Ingest Synthetic QA Warning] {e}")
 
     # Re-index search engine from database
     reload_search_index()
@@ -98,7 +107,8 @@ def reload_search_index():
             SELECT 
                 c.id as chunk_id, c.document_id, d.title as document_title,
                 c.section_title, c.page_number, c.text, c.word_count,
-                c.embedding_blob, d.workspace_id, d.version, d.effective_from, d.effective_until
+                c.embedding_blob, c.parent_chunk_id, c.parent_text,
+                d.workspace_id, d.version, d.effective_from, d.effective_until
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             ORDER BY c.document_id, c.chunk_index
@@ -117,7 +127,9 @@ def reload_search_index():
                 embedding=np.frombuffer(r["embedding_blob"], dtype=np.float32) if r["embedding_blob"] else None,
                 effective_from=r["effective_from"],
                 effective_until=r["effective_until"],
-                version=r["version"] or 1
+                version=r["version"] or 1,
+                parent_chunk_id=r["parent_chunk_id"] if "parent_chunk_id" in r.keys() else None,
+                parent_text=r["parent_text"] if "parent_text" in r.keys() else None
             )
             for r in rows
         ]

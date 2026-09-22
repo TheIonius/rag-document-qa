@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
   <div class="app-container">
@@ -287,6 +288,12 @@
           </div>
         </div>
 
+        <!-- Reader View Mode Switcher -->
+        <div id="reader-view-mode-bar" class="reader-view-mode-bar">
+          <button type="button" id="btn-view-text" class="reader-mode-btn active" onclick="switchReaderMode('text')">Text Partitions</button>
+          <button type="button" id="btn-view-pdf" class="reader-mode-btn" onclick="switchReaderMode('pdf')">Visual PDF Viewer</button>
+        </div>
+
         <!-- Jump Navigation across cited chunks in this doc -->
         <div id="reader-chunk-nav" class="reader-chunk-nav">
           <span class="reader-nav-label">Cited Partitions:</span>
@@ -295,9 +302,39 @@
           </div>
         </div>
 
-        <!-- Scrollable Document Content Area -->
+        <!-- Scrollable Document Content Area (Text Chunks) -->
         <div id="reader-body" class="reader-body">
           <!-- Populated dynamically via app.js -->
+        </div>
+
+        <!-- Interactive Visual PDF Canvas Viewport -->
+        <div id="reader-pdf-container" class="reader-pdf-container" style="display:none;">
+          <div class="pdf-toolbar">
+            <div class="pdf-page-controls">
+              <button type="button" class="btn-icon" onclick="pdfChangePage(-1)" aria-label="Previous Page" title="Previous Page">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              <span id="pdf-page-status" class="pdf-page-status">Page 1 / 1</span>
+              <button type="button" class="btn-icon" onclick="pdfChangePage(1)" aria-label="Next Page" title="Next Page">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </div>
+            <div class="pdf-zoom-controls">
+              <button type="button" class="btn-icon" onclick="pdfAdjustZoom(-0.15)" aria-label="Zoom Out" title="Zoom Out">-</button>
+              <span id="pdf-zoom-level" class="pdf-zoom-level">100%</span>
+              <button type="button" class="btn-icon" onclick="pdfAdjustZoom(0.15)" aria-label="Zoom In" title="Zoom In">+</button>
+            </div>
+          </div>
+          <div id="pdf-viewport-wrapper" class="pdf-viewport-wrapper">
+            <div class="pdf-canvas-layer" style="position:relative; display:inline-block;">
+              <canvas id="pdf-canvas"></canvas>
+              <div id="pdf-highlight-box" class="pdf-highlight-box" style="display:none;"></div>
+            </div>
+            <div id="pdf-loading-indicator" class="pdf-loading-indicator" style="display:none;">
+              <div class="loading-spinner"></div>
+              <span>Rendering PDF page coordinates...</span>
+            </div>
+          </div>
         </div>
       </aside>
 

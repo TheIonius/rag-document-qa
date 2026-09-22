@@ -1,9 +1,11 @@
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 import numpy as np
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.database import get_db, record_audit_event, utc_now_iso
@@ -87,7 +89,8 @@ def get_document_details(document_id: str, user: Optional[dict] = Depends(get_op
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this document.")
 
         chunks = conn.execute("""
-            SELECT id, document_id, chunk_index, section_title, page_number, text, word_count, char_start, char_end
+            SELECT id, document_id, chunk_index, section_title, page_number, text, word_count, char_start, char_end,
+                   parent_chunk_id, parent_text
             FROM chunks
             WHERE document_id = ?
             ORDER BY chunk_index ASC
@@ -97,6 +100,39 @@ def get_document_details(document_id: str, user: Optional[dict] = Depends(get_op
             "document": DocumentMetadata.model_validate(dict(doc)),
             "chunks": [ChunkDetail.model_validate(dict(c)) for c in chunks]
         }
+
+@router.get("/{document_id}/file")
+def get_document_file(document_id: str, user: Optional[dict] = Depends(get_optional_user)):
+    with get_db() as conn:
+        doc = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        doc_ws = doc["workspace_id"] or "ws_default"
+        if doc_ws != "ws_default":
+            if not user:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required to access document file.")
+            if not user.get("is_superuser"):
+                mem = conn.execute(
+                    "SELECT id FROM workspace_memberships WHERE user_id = ? AND workspace_id = ?",
+                    (user["id"], doc_ws)
+                ).fetchone()
+                if not mem:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this document file.")
+
+        storage_path = doc["storage_path"]
+        if not storage_path or not os.path.exists(storage_path):
+            raise HTTPException(status_code=404, detail="Document storage file not available.")
+
+        media_types = {
+            "pdf": "application/pdf",
+            "md": "text/markdown",
+            "txt": "text/plain",
+            "csv": "text/csv",
+            "tsv": "text/tab-separated-values"
+        }
+        media_type = media_types.get(doc["file_type"], "application/octet-stream")
+        return FileResponse(path=storage_path, media_type=media_type, filename=doc["filename"])
 
 @router.get("/{document_id}/chunk-analytics", response_model=ChunkAnalyticsResponse)
 def get_chunk_analytics(document_id: str, user: Optional[dict] = Depends(get_optional_user)):
@@ -258,14 +294,16 @@ def process_background_ingestion(
                 blob = embed_matrix[idx].tobytes() if idx < len(embed_matrix) else None
                 chunk_records.append((
                     chk_id, doc_id, c.chunk_index, c.section_title,
-                    c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob, now
+                    c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob,
+                    c.parent_chunk_id, c.parent_text, now
                 ))
 
             conn.executemany("""
                 INSERT INTO chunks (
                     id, document_id, chunk_index, section_title,
-                    page_number, text, word_count, char_start, char_end, embedding_blob, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    page_number, text, word_count, char_start, char_end, embedding_blob,
+                    parent_chunk_id, parent_text, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, chunk_records)
 
             conn.execute("""
@@ -284,6 +322,11 @@ def process_background_ingestion(
             details={"filename": parsed.filename, "chunks_count": len(chunks), "version": version}
         )
         refresh_index_from_db()
+        try:
+            from app.services.synthetic_qa import generate_synthetic_qa_pairs
+            generate_synthetic_qa_pairs(doc_id, parsed.title, chunks, active_ws)
+        except Exception as e:
+            print(f"[Synthetic QA Warning] Ingestion hook: {e}")
     except Exception as e:
         with get_db() as conn:
             conn.execute("""
@@ -433,14 +476,16 @@ async def upload_document(
             blob = embed_matrix[idx].tobytes() if idx < len(embed_matrix) else None
             chunk_records.append((
                 chk_id, doc_id, c.chunk_index, c.section_title,
-                c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob, now
+                c.page_number, c.text, c.word_count, c.char_start, c.char_end, blob,
+                c.parent_chunk_id, c.parent_text, now
             ))
 
         conn.executemany("""
             INSERT INTO chunks (
                 id, document_id, chunk_index, section_title,
-                page_number, text, word_count, char_start, char_end, embedding_blob, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                page_number, text, word_count, char_start, char_end, embedding_blob,
+                parent_chunk_id, parent_text, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, chunk_records)
 
         conn.execute("""
@@ -465,6 +510,11 @@ async def upload_document(
     )
 
     refresh_index_from_db()
+    try:
+        from app.services.synthetic_qa import generate_synthetic_qa_pairs
+        generate_synthetic_qa_pairs(doc_id, parsed.title, chunks, active_ws)
+    except Exception as e:
+        print(f"[Synthetic QA Warning] Upload hook: {e}")
 
     return DocumentMetadata(
         id=doc_id,
@@ -553,7 +603,8 @@ def refresh_index_from_db():
             SELECT 
                 c.id as chunk_id, c.document_id, d.title as document_title,
                 c.section_title, c.page_number, c.text, c.word_count,
-                c.embedding_blob, d.workspace_id, d.version, d.effective_from, d.effective_until,
+                c.embedding_blob, c.parent_chunk_id, c.parent_text,
+                d.workspace_id, d.version, d.effective_from, d.effective_until,
                 d.security_tags
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
@@ -590,7 +641,9 @@ def refresh_index_from_db():
                 effective_from=r["effective_from"],
                 effective_until=r["effective_until"],
                 version=r["version"] or 1,
-                security_tags=sec_tags
+                security_tags=sec_tags,
+                parent_chunk_id=r["parent_chunk_id"] if "parent_chunk_id" in r.keys() else None,
+                parent_text=r["parent_text"] if "parent_text" in r.keys() else None
             ))
 
         search_engine.index_chunks(indexed_chunks, persist_to_db=True)

@@ -24,7 +24,9 @@ class IndexedChunk:
         effective_from: Optional[str] = None,
         effective_until: Optional[str] = None,
         version: int = 1,
-        security_tags: Optional[List[str]] = None
+        security_tags: Optional[List[str]] = None,
+        parent_chunk_id: Optional[str] = None,
+        parent_text: Optional[str] = None
     ):
         self.chunk_id = chunk_id
         self.document_id = document_id
@@ -39,6 +41,8 @@ class IndexedChunk:
         self.effective_until = effective_until
         self.version = version
         self.security_tags = security_tags or ["public"]
+        self.parent_chunk_id = parent_chunk_id
+        self.parent_text = parent_text
 
         # Search runtime annotations (per-search instance, not shared)
         self.bm25_rank: Optional[int] = None
@@ -66,7 +70,9 @@ class IndexedChunk:
             effective_from=self.effective_from,
             effective_until=self.effective_until,
             version=self.version,
-            security_tags=list(self.security_tags) if self.security_tags else ["public"]
+            security_tags=list(self.security_tags) if self.security_tags else ["public"],
+            parent_chunk_id=self.parent_chunk_id,
+            parent_text=self.parent_text
         )
         c.bm25_rank = bm25_rank
         c.dense_rank = dense_rank
