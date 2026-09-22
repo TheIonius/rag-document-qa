@@ -49,16 +49,17 @@ flowchart TD
 
 ## Technical Design Decisions
 
-### 1. Hybrid Search (BM25 + Dense Semantic Vectors)
+### 1. Hybrid Search (SQLite FTS5 BM25 + Dense Semantic Vectors)
 Pure dense vector models frequently fail on technical documentation when users search for specific acronyms, error codes, or numbers (e.g., `401(k)`, `FIDO2`, `MFA`, `HTTP 429`, `DLQ`, `TLS 1.3`). Conversely, pure keyword search fails when queries use conceptual synonyms.
 
-We solve this using **Reciprocal Rank Fusion (RRF)**:
+We solve this using **Reciprocal Rank Fusion (RRF)** backed by SQLite's native `fts5` full-text search engine (with Porter unicode tokenization and automatic sync triggers) alongside dense subword vectorization:
 $$\text{RRF Score}(d) = w_{\text{bm25}} \cdot \frac{1}{60 + \text{Rank}_{\text{bm25}}(d)} + w_{\text{vector}} \cdot \frac{1}{60 + \text{Rank}_{\text{vector}}(d)}$$
 
-### 2. Context-Aware Semantic Chunking
-Blind character chunking splits paragraphs across sentences, causing loss of critical facts (such as policy exclusions or conditional clauses). Our chunker:
+### 2. Context-Aware Semantic Chunking & Table Preservation
+Blind character chunking splits paragraphs across sentences, causing loss of critical facts (such as policy exclusions, SLA tables, or conditional clauses). Our chunker:
 - Respects markdown header hierarchies (`#`, `##`, `###`) and document page breaks.
-- Retains section titles as searchable metadata on every chunk.
+- Detects markdown tables and keeps them atomic and indivisible across chunk boundaries.
+- Retains section titles and parent headings as searchable metadata on every chunk.
 - Maintains a 40-word sliding boundary overlap for sections exceeding the 250-word target window.
 
 ### 3. Strict Hallucination Refusal Guardrail
@@ -110,4 +111,4 @@ Run the test suite verifying chunking, retrieval, API contracts, citation verifi
 ```bash
 pytest -v
 ```
-All 25 unit and integration tests passing.
+All 27 unit and integration tests passing.

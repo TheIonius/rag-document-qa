@@ -166,6 +166,38 @@ async def call_ollama(prompt: str) -> Optional[str]:
         pass
     return None
 
+def clean_and_parse_json(raw_text: str) -> Optional[dict]:
+    if not raw_text or not raw_text.strip():
+        return None
+    cleaned = raw_text.strip()
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if match:
+        cleaned = match.group(1).strip()
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(cleaned[start:end + 1])
+        except Exception:
+            pass
+
+    answer_match = re.search(r'"answer"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', cleaned)
+    if answer_match:
+        ans_text = answer_match.group(1)
+        try:
+            ans_text = bytes(ans_text, "utf-8").decode("unicode_escape")
+        except Exception:
+            pass
+        return {"answer": ans_text, "citations": [], "is_out_of_scope": False}
+
+    return None
+
 def parse_llm_json_response(
     raw_response: str,
     query: str,
@@ -173,7 +205,9 @@ def parse_llm_json_response(
     retrieved_chunks: List[Tuple[IndexedChunk, float]]
 ) -> Optional[QueryResponse]:
     try:
-        data = json.loads(raw_response)
+        data = clean_and_parse_json(raw_response)
+        if not data:
+            return None
         raw_answer = data.get("answer", "")
         if not raw_answer:
             return None

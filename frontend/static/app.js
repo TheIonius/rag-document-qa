@@ -98,6 +98,8 @@ function setupEventListeners() {
       closeEngineModal();
       closeAuditModal();
       closeInspectorModal();
+      closeCompareModal();
+      closeAuthModal();
     }
   });
 
@@ -1939,6 +1941,150 @@ function copyCardAnswer(btn) {
 }
 
 // Modals and benchmarks
+
+function openCompareModal() {
+  const modal = document.getElementById("compare-modal-backdrop");
+  if (!modal) return;
+  modal.style.display = "flex";
+  populateCompareDocSelects();
+}
+
+function closeCompareModal() {
+  const modal = document.getElementById("compare-modal-backdrop");
+  if (modal) modal.style.display = "none";
+}
+
+function closeCompareModalOnBackdrop(e) {
+  if (e.target.id === "compare-modal-backdrop") closeCompareModal();
+}
+
+function populateCompareDocSelects() {
+  const selA = document.getElementById("compare-doc-a");
+  const selB = document.getElementById("compare-doc-b");
+  if (!selA || !selB) return;
+
+  const docs = allDocuments || [];
+  if (docs.length === 0) {
+    selA.innerHTML = `<option value="">No documents indexed</option>`;
+    selB.innerHTML = `<option value="">No documents indexed</option>`;
+    return;
+  }
+
+  const optionsHtml = docs.map(d => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.title)} (${d.file_type.toUpperCase()})</option>`).join("");
+  selA.innerHTML = optionsHtml;
+  selB.innerHTML = optionsHtml;
+
+  if (docs.length > 1) {
+    selB.selectedIndex = 1;
+  }
+}
+
+async function submitDocumentComparison() {
+  const selA = document.getElementById("compare-doc-a");
+  const selB = document.getElementById("compare-doc-b");
+  const queryInput = document.getElementById("compare-query-input");
+  const loading = document.getElementById("compare-loading-indicator");
+  const resultsContainer = document.getElementById("compare-results-container");
+  const runBtn = document.getElementById("btn-run-compare");
+
+  if (!selA || !selB || !resultsContainer) return;
+  const docIdA = selA.value;
+  const docIdB = selB.value;
+  const query = (queryInput ? queryInput.value.trim() : "") || "Security compliance, authentication obligations, and SLA standards";
+
+  if (!docIdA || !docIdB) {
+    alert("Please select both a baseline and comparison document.");
+    return;
+  }
+
+  if (loading) loading.style.display = "flex";
+  resultsContainer.style.display = "none";
+  if (runBtn) runBtn.disabled = true;
+
+  try {
+    const res = await apiFetch("/api/v1/query/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        doc_id_a: docIdA,
+        doc_id_b: docIdB,
+        query: query,
+        top_k_per_doc: 4
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Comparison analysis failed");
+    }
+
+    const data = await res.json();
+    renderComparisonResults(data);
+  } catch (err) {
+    resultsContainer.innerHTML = `
+      <div class="auth-error-banner" style="display:block;">
+        <span>Comparison Error: ${escapeHtml(err.message)}</span>
+      </div>
+    `;
+    resultsContainer.style.display = "block";
+  } finally {
+    if (loading) loading.style.display = "none";
+    if (runBtn) runBtn.disabled = false;
+  }
+}
+
+function renderComparisonResults(data) {
+  const container = document.getElementById("compare-results-container");
+  if (!container) return;
+
+  const docA = data.doc_a || {};
+  const docB = data.doc_b || {};
+  const scorePct = Math.round((data.alignment_score || 0) * 100);
+  const dims = data.dimensions || [];
+
+  const dimsHtml = dims.map(d => {
+    const statusClass = `discrepancy-${d.discrepancy_status || 'aligned'}`;
+    const statusLabel = (d.discrepancy_status || 'aligned').replace(/_/g, ' ');
+    return `
+      <div class="compare-dimension-card">
+        <div class="compare-dimension-header">
+          <span class="compare-dimension-title">${escapeHtml(d.dimension_name)}</span>
+          <span class="discrepancy-pill ${statusClass}">${statusLabel}</span>
+        </div>
+        <div class="compare-grid-2col">
+          <div class="compare-col">
+            <div class="compare-col-header">${escapeHtml(docA.title || 'Document A')}</div>
+            <div>${escapeHtml(d.finding_a)}</div>
+          </div>
+          <div class="compare-col">
+            <div class="compare-col-header">${escapeHtml(docB.title || 'Document B')}</div>
+            <div>${escapeHtml(d.finding_b)}</div>
+          </div>
+        </div>
+        ${d.notes ? `<div class="compare-dimension-notes">${escapeHtml(d.notes)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="compare-overview-banner">
+      <div>
+        <strong>${escapeHtml(docA.title || 'Baseline')}</strong> vs <strong>${escapeHtml(docB.title || 'Target')}</strong>
+      </div>
+      <div class="compare-score-badge">Alignment Score: ${scorePct}%</div>
+    </div>
+    ${data.executive_synthesis ? `
+      <div class="compare-synthesis-card">
+        <strong>Executive Synthesis:</strong>
+        <p style="margin-top:6px;">${escapeHtml(data.executive_synthesis)}</p>
+      </div>
+    ` : ''}
+    <div class="compare-dimensions-list">
+      ${dimsHtml}
+    </div>
+  `;
+  container.style.display = "block";
+}
 
 function openEngineModal() {
   const modal = document.getElementById("engine-modal-backdrop");

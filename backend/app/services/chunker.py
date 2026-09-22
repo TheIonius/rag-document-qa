@@ -126,6 +126,39 @@ def split_markdown_sections(text: str) -> List[tuple]:
 
     return sections
 
+def is_markdown_table_block(text: str) -> bool:
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+    if len(lines) >= 2:
+        has_divider = any(re.match(r"^\|?\s*[-:]+\s*\|", l) for l in lines)
+        table_lines = sum(1 for l in lines if l.startswith("|") or l.endswith("|") or "|" in l)
+        return has_divider and (table_lines / len(lines) >= 0.7)
+    return False
+
+def split_table_by_rows(table_text: str, max_words: int) -> List[str]:
+    lines = [l for l in table_text.strip().splitlines() if l.strip()]
+    if len(lines) <= 2:
+        return [table_text]
+    header = lines[:2]
+    header_str = "\n".join(header)
+    sub_tables = []
+    current_rows = []
+    current_count = len(header_str.split())
+
+    for row in lines[2:]:
+        row_words = len(row.split())
+        if current_count + row_words > max_words and current_rows:
+            sub_tables.append(header_str + "\n" + "\n".join(current_rows))
+            current_rows = [row]
+            current_count = len(header_str.split()) + row_words
+        else:
+            current_rows.append(row)
+            current_count += row_words
+
+    if current_rows:
+        sub_tables.append(header_str + "\n" + "\n".join(current_rows))
+
+    return sub_tables or [table_text]
+
 def sliding_window_chunk(
     text: str,
     section_title: str,
@@ -147,6 +180,49 @@ def sliding_window_chunk(
             continue
 
         p_words = p_clean.split()
+
+        # Preserve markdown tables without cutting across rows
+        if is_markdown_table_block(p_clean):
+            if current_words:
+                chunk_text = " ".join(current_words)
+                chunks.append(Chunk(
+                    chunk_index=chunk_idx,
+                    section_title=section_title,
+                    page_number=page_number,
+                    text=chunk_text,
+                    word_count=len(current_words),
+                    char_start=base_offset + current_para_start,
+                    char_end=base_offset + current_para_start + len(chunk_text)
+                ))
+                chunk_idx += 1
+                current_words = []
+
+            if len(p_words) <= 400:
+                chunks.append(Chunk(
+                    chunk_index=chunk_idx,
+                    section_title=section_title,
+                    page_number=page_number,
+                    text=p_clean,
+                    word_count=len(p_words),
+                    char_start=base_offset + current_para_start,
+                    char_end=base_offset + current_para_start + len(p_clean)
+                ))
+                chunk_idx += 1
+            else:
+                table_slices = split_table_by_rows(p_clean, max_words=target_words)
+                for tbl_slice in table_slices:
+                    s_words = tbl_slice.split()
+                    chunks.append(Chunk(
+                        chunk_index=chunk_idx,
+                        section_title=section_title,
+                        page_number=page_number,
+                        text=tbl_slice,
+                        word_count=len(s_words),
+                        char_start=base_offset + current_para_start,
+                        char_end=base_offset + current_para_start + len(tbl_slice)
+                    ))
+                    chunk_idx += 1
+            continue
 
         if len(current_words) + len(p_words) <= target_words:
             current_words.extend(p_words)

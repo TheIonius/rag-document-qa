@@ -65,6 +65,17 @@
           <span>Engine Settings</span>
         </button>
 
+        <button type="button" id="btn-open-compare" class="btn btn-ghost" onclick="openCompareModal()" title="Side-by-side cross-document policy comparison">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 3 21 3 21 8"/>
+            <line x1="4" y1="20" x2="21" y2="3"/>
+            <polyline points="21 16 21 21 16 21"/>
+            <line x1="15" y1="15" x2="21" y2="21"/>
+            <line x1="4" y1="4" x2="9" y2="9"/>
+          </svg>
+          <span>Compare Policies</span>
+        </button>
+
         <button type="button" id="btn-export-investigation-brief" class="btn btn-secondary" onclick="exportInvestigationBrief()" style="display:none;" title="Download complete investigation memo as Markdown brief">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -476,6 +487,56 @@
             </div>
             <button type="button" class="btn btn-secondary btn-block" onclick="handleSignOut()">Sign Out</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Compare Documents Modal Sheet -->
+    <div id="compare-modal-backdrop" class="modal-backdrop" style="display:none;" onclick="closeCompareModalOnBackdrop(event)">
+      <div class="compare-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="compare-modal-title">
+        <div class="modal-sheet-header">
+          <div>
+            <span class="sheet-tag">Cross-Document Analysis</span>
+            <h2 id="compare-modal-title" class="sheet-title">Policy & Specification Comparison</h2>
+          </div>
+          <button type="button" class="modal-close-btn" onclick="closeCompareModal()" title="Close (Esc)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-sheet-body" style="padding: 20px; overflow-y: auto;">
+          <div class="compare-form-grid">
+            <div class="compare-doc-select-col">
+              <label for="compare-doc-a" class="form-label">Baseline Document (A)</label>
+              <select id="compare-doc-a" class="form-input"></select>
+            </div>
+            <div class="compare-doc-select-col">
+              <label for="compare-doc-b" class="form-label">Comparison Document (B)</label>
+              <select id="compare-doc-b" class="form-input"></select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 12px;">
+            <label for="compare-query-input" class="form-label">Comparison Dimension / Query Focus</label>
+            <input type="text" id="compare-query-input" class="form-input" value="Security compliance, authentication obligations, and SLA standards" placeholder="Enter topic to compare across documents...">
+          </div>
+          <div class="compare-actions-row">
+            <button type="button" id="btn-run-compare" class="btn btn-primary" onclick="submitDocumentComparison()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 3 21 3 21 8"/>
+                <line x1="4" y1="20" x2="21" y2="3"/>
+              </svg>
+              <span>Execute Policy Comparison</span>
+            </button>
+          </div>
+
+          <div id="compare-loading-indicator" style="display:none;" class="compare-loading">
+            <div class="spinner"></div>
+            <span>Evaluating cross-document semantic dimensions and discrepancies...</span>
+          </div>
+
+          <div id="compare-results-container" style="display:none; margin-top: 16px;"></div>
         </div>
       </div>
     </div>

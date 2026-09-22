@@ -211,7 +211,45 @@ def init_db(db_path: Path = None):
         BEGIN
             SELECT RAISE(FAIL, 'Audit events are immutable and cannot be deleted');
         END;
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            chunk_id UNINDEXED,
+            document_id UNINDEXED,
+            workspace_id UNINDEXED,
+            text,
+            tokenize = 'porter unicode61'
+        );
+
+        DROP TRIGGER IF EXISTS trg_chunks_fts_ai;
+        DROP TRIGGER IF EXISTS trg_chunks_fts_au;
+
+        CREATE TRIGGER IF NOT EXISTS trg_chunks_fts_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO chunks_fts(chunk_id, document_id, workspace_id, text)
+            VALUES (new.id, new.document_id, (SELECT workspace_id FROM documents WHERE id = new.document_id), new.text);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_chunks_fts_ad AFTER DELETE ON chunks BEGIN
+            DELETE FROM chunks_fts WHERE chunk_id = old.id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_chunks_fts_au AFTER UPDATE ON chunks BEGIN
+            DELETE FROM chunks_fts WHERE chunk_id = old.id;
+            INSERT INTO chunks_fts(chunk_id, document_id, workspace_id, text)
+            VALUES (new.id, new.document_id, (SELECT workspace_id FROM documents WHERE id = new.document_id), new.text);
+        END;
         """)
+
+        # Backfill FTS index for existing chunks
+        try:
+            conn.execute("""
+                INSERT INTO chunks_fts(chunk_id, document_id, workspace_id, text)
+                SELECT c.id, c.document_id, d.workspace_id, c.text
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE c.id NOT IN (SELECT chunk_id FROM chunks_fts);
+            """)
+        except sqlite3.OperationalError:
+            pass
 
         # Add backwards-compatible column migrations for existing SQLite databases
         for col_def in [

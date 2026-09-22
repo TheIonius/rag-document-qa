@@ -38,3 +38,14 @@ def test_hybrid_search_empty_query():
     engine = HybridSearchEngine()
     results = engine.search("", top_k=4)
     assert results == []
+
+def test_sqlite_fts5_native_search():
+    from app.database import get_db, init_db
+    init_db()
+    with get_db() as conn:
+        conn.execute("INSERT OR REPLACE INTO documents (id, workspace_id, filename, title, file_type, file_size, raw_text, created_at) VALUES ('doc_test_fts', 'ws_default', 'test.md', 'Test FTS', 'md', 100, 'text', '2026-09-21T00:00:00Z')")
+        conn.execute("INSERT OR REPLACE INTO chunks (id, document_id, chunk_index, text, word_count, char_start, char_end, created_at) VALUES ('chk_test_fts_1', 'doc_test_fts', 0, 'Hardware security key FIDO2Quantum token is mandatory for production.', 10, 0, 60, '2026-09-21T00:00:00Z')")
+        
+        row = conn.execute("SELECT chunk_id, text FROM chunks_fts WHERE chunks_fts MATCH 'FIDO2Quantum'").fetchone()
+        assert row is not None
+        assert row["chunk_id"] == "chk_test_fts_1"

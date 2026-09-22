@@ -136,6 +136,15 @@ STOP_WORDS = {
     "while", "who", "whom", "why", "with", "you", "your", "yours"
 }
 
+def sanitize_fts5_query(query: str) -> str:
+    tokens = re.findall(r"\b[a-zA-Z0-9_-]+\b", query)
+    tokens = [t for t in tokens if len(t) > 1 and t.lower() not in STOP_WORDS]
+    if not tokens:
+        tokens = re.findall(r"\b[a-zA-Z0-9_-]+\b", query)
+    if not tokens:
+        return ""
+    return " OR ".join(f'"{t}"' for t in tokens[:16])
+
 @dataclass(frozen=True)
 class SearchIndexSnapshot:
     chunks: Tuple[IndexedChunk, ...]
@@ -148,6 +157,34 @@ class HybridSearchEngine:
     def __init__(self):
         self._snapshot: Optional[SearchIndexSnapshot] = None
         self._embedding_model = None
+
+    def _search_fts5_bm25(self, query: str, workspace_id: Optional[str] = None) -> Dict[str, float]:
+        fts_query = sanitize_fts5_query(query)
+        if not fts_query:
+            return {}
+        try:
+            from app.database import get_db
+            with get_db() as conn:
+                if workspace_id:
+                    cursor = conn.execute("""
+                        SELECT chunk_id, bm25(chunks_fts) as rank
+                        FROM chunks_fts
+                        WHERE chunks_fts MATCH ? AND (workspace_id = ? OR workspace_id IS NULL)
+                        ORDER BY rank ASC
+                        LIMIT 100
+                    """, (fts_query, workspace_id))
+                else:
+                    cursor = conn.execute("""
+                        SELECT chunk_id, bm25(chunks_fts) as rank
+                        FROM chunks_fts
+                        WHERE chunks_fts MATCH ?
+                        ORDER BY rank ASC
+                        LIMIT 100
+                    """, (fts_query,))
+                rows = cursor.fetchall()
+                return {row["chunk_id"]: float(-row["rank"]) for row in rows}
+        except Exception:
+            return {}
 
     @property
     def chunks(self) -> List[IndexedChunk]:
@@ -298,8 +335,15 @@ class HybridSearchEngine:
         if not content_query_tokens:
             return []
 
-        # 1. Lexical BM25 Scoring across snapshot
-        bm25_raw_scores = snapshot.bm25.get_scores(content_query_tokens)
+        # 1. Lexical BM25 Scoring (SQLite FTS5 native with in-memory fallback)
+        fts_scores = self._search_fts5_bm25(query, workspace_id)
+        in_memory_bm25 = snapshot.bm25.get_scores(content_query_tokens)
+        bm25_raw_scores = []
+        for idx, chk in enumerate(snapshot.chunks):
+            if chk.chunk_id in fts_scores:
+                bm25_raw_scores.append(max(fts_scores[chk.chunk_id], in_memory_bm25[idx]))
+            else:
+                bm25_raw_scores.append(in_memory_bm25[idx])
 
         # 2. Dense Semantic Cosine Similarity Scoring
         query_embed = self._embed_texts([query])[0]
