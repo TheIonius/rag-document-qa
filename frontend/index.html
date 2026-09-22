@@ -24,7 +24,7 @@
         <div class="brand-info">
           <div class="brand-row">
             <span class="brand-name">Cortex Intelligence</span>
-            <span class="env-badge">Enterprise Workspace</span>
+            <span id="env-badge" class="env-badge guest-mode" title="Operating in shared public demo sandbox. Sign in to access private tenant workspaces.">Guest Sandbox</span>
             <span class="status-indicator-pill" title="Active Index Partitions">
               <span class="status-dot"></span>
               <span id="corpus-status-text">27 Partitions Active</span>
@@ -36,7 +36,8 @@
       <div class="header-actions">
         <div class="workspace-selector-container">
           <select id="workspace-select" class="workspace-select" onchange="changeActiveWorkspace(this.value)" title="Active Workspace Partition">
-            <option value="ws_default">Production Workspace</option>
+            <option value="ws_default">Demo Sandbox (Shared)</option>
+            <option value="__auth_teaser__" disabled>+ Private Tenant Workspace (Sign in to unlock)</option>
           </select>
         </div>
 
@@ -46,6 +47,7 @@
             <circle cx="12" cy="7" r="4"/>
           </svg>
           <span id="user-display-name">Sign In</span>
+          <span id="user-role-badge" class="user-role-badge" style="display:none;">Owner</span>
         </button>
 
         <button type="button" id="btn-open-audit-log" class="btn btn-ghost" title="Review execution audit trail and historical query ledger">
@@ -145,7 +147,7 @@
             </svg>
             <div class="upload-compact-meta">
               <span class="upload-compact-title">Add Source Document</span>
-              <span class="upload-compact-sub">PDF, Markdown, TXT</span>
+              <span class="upload-compact-sub">Shared Demo Sandbox · Sign in for private</span>
             </div>
             <input type="file" id="file-upload-input" style="display:none;" accept=".pdf,.md,.txt">
           </div>
@@ -484,7 +486,7 @@
         <div class="modal-sheet-header">
           <div>
             <span class="sheet-tag">Access Governance</span>
-            <h2 id="auth-modal-title" class="sheet-title">Account Authentication</h2>
+            <h2 id="auth-modal-title" class="sheet-title">Account Authentication &amp; Multi-Tenancy</h2>
           </div>
           <button type="button" class="modal-close-btn" onclick="closeAuthModal()" title="Close (Esc)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -493,41 +495,76 @@
             </svg>
           </button>
         </div>
-        <div class="auth-modal-body">
-          <div class="auth-tabs" id="auth-tabs-row">
-            <button type="button" id="tab-login" class="auth-tab-btn active" onclick="switchAuthTab('login')">Sign In</button>
-            <button type="button" id="tab-register" class="auth-tab-btn" onclick="switchAuthTab('register')">Create Account</button>
-          </div>
-          <div id="auth-error-banner" class="auth-error-banner" style="display:none;"></div>
-          
-          <form id="auth-form" onsubmit="handleAuthSubmit(event)">
-            <div id="register-name-group" class="form-group" style="display:none;">
-              <label for="auth-fullname" class="form-label">Full Name</label>
-              <input type="text" id="auth-fullname" class="form-input" placeholder="Enterprise User">
+        <div class="auth-modal-split-body">
+          <div class="auth-modal-form-col">
+            <div class="auth-tabs" id="auth-tabs-row">
+              <button type="button" id="tab-login" class="auth-tab-btn active" onclick="switchAuthTab('login')">Sign In</button>
+              <button type="button" id="tab-register" class="auth-tab-btn" onclick="switchAuthTab('register')">Create Account</button>
             </div>
-            <div class="form-group">
-              <label for="auth-email" id="auth-email-label" class="form-label">Email or Username</label>
-              <input type="text" id="auth-email" class="form-input" placeholder="admin or user@enterprise.local" required autocomplete="username">
-            </div>
-            <div class="form-group">
-              <label for="auth-password" class="form-label">Password</label>
-              <input type="password" id="auth-password" class="form-input" placeholder="Minimum 4 characters" required autocomplete="current-password">
-            </div>
-            <div class="auth-actions">
-              <button type="submit" id="btn-auth-submit" class="btn btn-primary btn-block">Sign In</button>
-            </div>
-          </form>
+            <div id="auth-error-banner" class="auth-error-banner" style="display:none;"></div>
+            
+            <form id="auth-form" onsubmit="handleAuthSubmit(event)">
+              <div id="register-name-group" class="form-group" style="display:none;">
+                <label for="auth-fullname" class="form-label">Full Name</label>
+                <input type="text" id="auth-fullname" class="form-input" placeholder="Enterprise User">
+              </div>
+              <div class="form-group">
+                <label for="auth-email" id="auth-email-label" class="form-label">Email or Username</label>
+                <input type="text" id="auth-email" class="form-input" placeholder="admin or user@enterprise.local" required autocomplete="username">
+                <span id="auth-email-hint" class="field-hint" style="display:none;">Must be a valid corporate or personal email with domain</span>
+              </div>
+              <div class="form-group">
+                <label for="auth-password" class="form-label">Password</label>
+                <input type="password" id="auth-password" class="form-input" placeholder="Minimum 8 characters" required autocomplete="current-password">
+                <span id="auth-password-hint" class="field-hint" style="display:none;">Requires min 8 characters: uppercase, lowercase, number, and symbol</span>
+              </div>
+              <div class="auth-actions">
+                <button type="submit" id="btn-auth-submit" class="btn btn-primary btn-block">Sign In</button>
+              </div>
+            </form>
 
-          <div id="user-profile-section" style="display:none;">
-            <div class="user-profile-info">
-              <div class="profile-avatar" id="profile-avatar">EA</div>
-              <div class="profile-details">
-                <div id="profile-name" class="profile-name">Enterprise Administrator</div>
-                <div id="profile-email" class="profile-email">admin@enterprise.local</div>
-                <div id="profile-role" class="profile-role-badge">Owner</div>
+            <div id="user-profile-section" style="display:none;">
+              <div class="user-profile-info">
+                <div class="profile-avatar" id="profile-avatar">EA</div>
+                <div class="profile-details">
+                  <div id="profile-name" class="profile-name">Enterprise Administrator</div>
+                  <div id="profile-email" class="profile-email">admin@enterprise.local</div>
+                  <div id="profile-role" class="profile-role-badge">Owner</div>
+                </div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-block" onclick="handleSignOut()">Sign Out</button>
+            </div>
+          </div>
+
+          <div class="auth-modal-perks-col">
+            <div class="auth-perks-heading">Authenticated Enterprise Perks</div>
+            <p class="auth-perks-intro">Signing in provisions an isolated tenant workspace and unlocks production governance capabilities:</p>
+            <div class="auth-perks-grid">
+              <div class="auth-perk-item">
+                <div class="auth-perk-title">Data Isolation</div>
+                <div class="auth-perk-desc">Dedicated tenant workspaces preventing cross-tenant document leakage.</div>
+              </div>
+              <div class="auth-perk-item">
+                <div class="auth-perk-title">Team Governance &amp; RBAC</div>
+                <div class="auth-perk-desc">Four-tier roles: Owner, Admin, Editor, and Viewer with member invitation management.</div>
+              </div>
+              <div class="auth-perk-item">
+                <div class="auth-perk-title">Confidential Security Tags</div>
+                <div class="auth-perk-desc">ACL filtering for sensitive tags (confidential, executive, pci-dss) restricted from public retrieval.</div>
+              </div>
+              <div class="auth-perk-item">
+                <div class="auth-perk-title">SOC 2 Audit Ledger</div>
+                <div class="auth-perk-desc">Trigger-enforced immutable execution logs with cryptographic actor identity tracking.</div>
               </div>
             </div>
-            <button type="button" class="btn btn-secondary btn-block" onclick="handleSignOut()">Sign Out</button>
+
+            <div class="auth-quick-eval-card">
+              <div class="auth-quick-eval-title">Quick Evaluation (1-Click)</div>
+              <p class="auth-quick-eval-desc">Instantly provision an ephemeral enterprise tenant account to experience authenticated permissions.</p>
+              <button type="button" id="btn-quick-demo-account" class="btn btn-secondary btn-block" onclick="quickRegisterDemoUser()">
+                Create Instant Demo Account
+              </button>
+            </div>
           </div>
         </div>
       </div>

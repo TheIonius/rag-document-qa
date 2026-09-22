@@ -1,5 +1,6 @@
+import re
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class DocumentMetadata(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -204,10 +205,37 @@ class EvaluationBenchmarkResult(BaseModel):
 
 # Enterprise and Multi-Tenancy Schemas
 
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9_.-]+\.[a-zA-Z0-9-.]+$")
+
 class UserRegisterRequest(BaseModel):
     email: str
-    password: str = Field(..., min_length=4)
+    password: str
     full_name: Optional[str] = "Enterprise User"
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, v: str) -> str:
+        cleaned = v.strip().lower()
+        if not cleaned or not EMAIL_REGEX.match(cleaned):
+            raise ValueError("Please provide a valid corporate or personal email address with domain (e.g. user@enterprise.com).")
+        return cleaned
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long.")
+        if len(v) > 128:
+            raise ValueError("Password cannot exceed 128 characters.")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter (A-Z).")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter (a-z).")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one numeric digit (0-9).")
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`"]', v):
+            raise ValueError("Password must contain at least one special character or symbol (!@#$%^&*).")
+        return v
 
 class UserLoginRequest(BaseModel):
     email: str

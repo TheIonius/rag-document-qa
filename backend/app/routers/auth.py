@@ -19,11 +19,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register_user(req: UserRegisterRequest):
-    raw_identifier = req.email.strip().lower()
-    if not raw_identifier:
-        raise HTTPException(status_code=400, detail="Username or email cannot be empty.")
-    email = raw_identifier if "@" in raw_identifier else f"{raw_identifier}@enterprise.local"
-    display_name = (req.full_name or "").strip() or raw_identifier.title()
+    email = req.email.strip().lower()
+    display_name = (req.full_name or "").strip() or email.split("@")[0].title()
 
     now = utc_now_iso()
     user_id = f"usr_{uuid.uuid4().hex[:12]}"
@@ -32,9 +29,9 @@ def register_user(req: UserRegisterRequest):
     mem_id = f"mem_{uuid.uuid4().hex[:12]}"
 
     with get_db() as conn:
-        existing = conn.execute("SELECT id FROM users WHERE email = ? OR email = ?", (email, raw_identifier)).fetchone()
+        existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
         if existing:
-            raise HTTPException(status_code=409, detail="A user with this username or email already exists.")
+            raise HTTPException(status_code=409, detail="A user with this email already exists.")
 
         user_count = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()["cnt"]
         is_superuser = 1 if user_count == 0 else 0

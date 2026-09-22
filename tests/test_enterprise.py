@@ -27,6 +27,55 @@ def test_auth_registration_and_login(client):
     assert me_res.status_code == 200
     assert me_res.json()["email"] == "engineer@acme.corp"
 
+def test_password_and_email_regulations_enforcement(client):
+    # 1. Reject password too short (< 8 chars, e.g. "123")
+    res_short = client.post("/api/v1/auth/register", json={
+        "email": "analyst@enterprise.com",
+        "password": "123",
+        "full_name": "Test User"
+    })
+    assert res_short.status_code == 422
+
+    # 2. Reject password lacking uppercase letter
+    res_no_upper = client.post("/api/v1/auth/register", json={
+        "email": "analyst@enterprise.com",
+        "password": "weakpassword123!",
+        "full_name": "Test User"
+    })
+    assert res_no_upper.status_code == 422
+
+    # 3. Reject password lacking number
+    res_no_num = client.post("/api/v1/auth/register", json={
+        "email": "analyst@enterprise.com",
+        "password": "StrongPassword!",
+        "full_name": "Test User"
+    })
+    assert res_no_num.status_code == 422
+
+    # 4. Reject password lacking special symbol
+    res_no_sym = client.post("/api/v1/auth/register", json={
+        "email": "analyst@enterprise.com",
+        "password": "StrongPassword123",
+        "full_name": "Test User"
+    })
+    assert res_no_sym.status_code == 422
+
+    # 5. Reject invalid email without domain
+    res_bad_email = client.post("/api/v1/auth/register", json={
+        "email": "just_a_username",
+        "password": "StrongPassword123!",
+        "full_name": "Test User"
+    })
+    assert res_bad_email.status_code == 422
+
+    # 6. Accept compliant email and password
+    res_ok = client.post("/api/v1/auth/register", json={
+        "email": "compliant_analyst@enterprise.com",
+        "password": "CompliantPassword123!",
+        "full_name": "Compliant User"
+    })
+    assert res_ok.status_code == 201
+
 def test_workspace_creation_and_isolation(client):
     # Register user
     reg_res = client.post("/api/v1/auth/register", json={

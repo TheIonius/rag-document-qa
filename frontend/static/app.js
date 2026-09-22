@@ -254,25 +254,33 @@ async function checkAuthStatus() {
 
 function updateUserAuthUI() {
   const displayBtn = document.getElementById("user-display-name");
+  const userRoleBadge = document.getElementById("user-role-badge");
   const profileSection = document.getElementById("user-profile-section");
   const authForm = document.getElementById("auth-form");
   const authTabsRow = document.getElementById("auth-tabs-row");
-  const envBadge = document.querySelector(".env-badge");
+  const envBadge = document.getElementById("env-badge") || document.querySelector(".env-badge");
   const uploadSub = document.querySelector(".upload-compact-sub");
+  const uploadZone = document.getElementById("upload-zone");
 
   if (currentUser) {
     if (displayBtn) displayBtn.textContent = currentUser.full_name || currentUser.email;
+    if (userRoleBadge) {
+      userRoleBadge.style.display = "inline-block";
+      userRoleBadge.textContent = currentUser.is_superuser ? "Superuser" : "Owner";
+    }
     if (profileSection) profileSection.style.display = "block";
     if (authForm) authForm.style.display = "none";
     if (authTabsRow) authTabsRow.style.display = "none";
     if (envBadge) {
-      envBadge.textContent = currentUser.is_superuser ? "Enterprise Superuser" : "Authenticated Tenant";
-      envBadge.style.background = "#064e3b";
-      envBadge.style.color = "#a7f3d0";
-      envBadge.style.borderColor = "#059669";
+      envBadge.className = "env-badge tenant-mode";
+      envBadge.textContent = currentUser.is_superuser ? "Enterprise Superuser" : "Private Tenant";
+      envBadge.title = `Authenticated as ${currentUser.full_name || currentUser.email}`;
     }
     if (uploadSub) {
-      uploadSub.textContent = "Upload to current workspace";
+      uploadSub.textContent = "Private Tenant Upload · Linked to your account";
+    }
+    if (uploadZone) {
+      uploadZone.title = "Uploaded documents are private to your workspace and stamped with your account identity.";
     }
 
     const pName = document.getElementById("profile-name");
@@ -291,17 +299,20 @@ function updateUserAuthUI() {
     }
   } else {
     if (displayBtn) displayBtn.textContent = "Sign In";
+    if (userRoleBadge) userRoleBadge.style.display = "none";
     if (profileSection) profileSection.style.display = "none";
     if (authForm) authForm.style.display = "block";
     if (authTabsRow) authTabsRow.style.display = "flex";
     if (envBadge) {
-      envBadge.textContent = "Guest Mode (Demo Sandbox)";
-      envBadge.style.background = "var(--bg-tertiary)";
-      envBadge.style.color = "var(--text-muted)";
-      envBadge.style.borderColor = "var(--border-color)";
+      envBadge.className = "env-badge guest-mode";
+      envBadge.textContent = "Guest Sandbox";
+      envBadge.title = "Operating in shared public demo sandbox. Sign in to access private tenant workspaces.";
     }
     if (uploadSub) {
-      uploadSub.textContent = "Sign in for private workspace";
+      uploadSub.textContent = "Shared Demo Sandbox · Sign in for private";
+    }
+    if (uploadZone) {
+      uploadZone.title = "Documents uploaded in Guest Mode go into the public demo sandbox. Sign in to upload private documents with custom ACL security tags.";
     }
   }
 }
@@ -309,6 +320,14 @@ function updateUserAuthUI() {
 async function loadWorkspaces() {
   const selector = document.getElementById("workspace-select");
   if (!selector) return;
+
+  if (!currentUser) {
+    selector.innerHTML = `
+      <option value="ws_default">Demo Sandbox (Shared)</option>
+      <option value="__auth_teaser__" disabled>+ Private Tenant Workspace (Sign in to unlock)</option>
+    `;
+    return;
+  }
 
   try {
     const res = await apiFetch("/api/v1/workspaces");
@@ -320,11 +339,14 @@ async function loadWorkspaces() {
         currentWorkspaceId = workspaces[0].id;
         localStorage.setItem("cortex_workspace_id", currentWorkspaceId);
       }
-      selector.innerHTML = workspaces.map(w => `
-        <option value="${w.id}" ${w.id === currentWorkspaceId ? 'selected' : ''}>
-          ${escapeHtml(w.name)} (${w.role || 'member'})
-        </option>
-      `).join("");
+      selector.innerHTML = `
+        ${workspaces.map(w => `
+          <option value="${w.id}" ${w.id === currentWorkspaceId ? 'selected' : ''}>
+            ${escapeHtml(w.name)} (${w.role || 'member'})
+          </option>
+        `).join("")}
+        <option value="__create_new__">+ Create New Workspace...</option>
+      `;
     }
   } catch (e) {
     // Keep default option
@@ -332,11 +354,83 @@ async function loadWorkspaces() {
 }
 
 function changeActiveWorkspace(wsId) {
+  if (wsId === "__create_new__") {
+    const name = prompt("Enter name for new tenant workspace (e.g. Legal Ops, Engineering):");
+    if (name && name.trim()) {
+      createNewWorkspace(name.trim());
+    } else {
+      loadWorkspaces();
+    }
+    return;
+  }
   currentWorkspaceId = wsId;
   localStorage.setItem("cortex_workspace_id", wsId);
   loadDocuments();
   loadThreads();
   updateHistoryBadge();
+}
+
+async function createNewWorkspace(name) {
+  try {
+    const res = await apiFetch("/api/v1/workspaces", {
+      method: "POST",
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert(err.detail || "Failed to create workspace");
+      return;
+    }
+    const ws = await res.json();
+    currentWorkspaceId = ws.id;
+    localStorage.setItem("cortex_workspace_id", ws.id);
+    await loadWorkspaces();
+    loadDocuments();
+    loadThreads();
+  } catch (e) {
+    alert("Error creating workspace: " + e.message);
+  }
+}
+
+async function quickRegisterDemoUser() {
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  const email = `analyst_${rand}@enterprise.local`;
+  const password = "demoPassword123!";
+  const fullName = `Analyst ${rand}`;
+  const btn = document.getElementById("btn-quick-demo-account");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Provisioning Tenant Account...";
+  }
+
+  try {
+    const res = await fetch("/api/v1/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, full_name: fullName })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Registration failed");
+
+    localStorage.setItem("cortex_auth_token", data.access_token);
+    currentUser = data.user;
+    updateUserAuthUI();
+    await loadWorkspaces();
+    loadDocuments();
+    loadThreads();
+    closeAuthModal();
+  } catch (err) {
+    const errBanner = document.getElementById("auth-error-banner");
+    if (errBanner) {
+      errBanner.textContent = err.message || "Failed to create demo account";
+      errBanner.style.display = "block";
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Create Instant Demo Account";
+    }
+  }
 }
 
 function openAuthModal() {
@@ -364,6 +458,11 @@ function switchAuthTab(tab) {
   const nameGroup = document.getElementById("register-name-group");
   const submitBtn = document.getElementById("btn-auth-submit");
   const errBanner = document.getElementById("auth-error-banner");
+  const emailLabel = document.getElementById("auth-email-label");
+  const emailInput = document.getElementById("auth-email");
+  const passwordInput = document.getElementById("auth-password");
+  const emailHint = document.getElementById("auth-email-hint");
+  const passwordHint = document.getElementById("auth-password-hint");
 
   if (errBanner) errBanner.style.display = "none";
 
@@ -372,11 +471,21 @@ function switchAuthTab(tab) {
     if (regTab) regTab.classList.remove("active");
     if (nameGroup) nameGroup.style.display = "none";
     if (submitBtn) submitBtn.textContent = "Sign In";
+    if (emailLabel) emailLabel.textContent = "Email or Username";
+    if (emailInput) emailInput.placeholder = "admin or user@enterprise.local";
+    if (passwordInput) passwordInput.placeholder = "Enter your password";
+    if (emailHint) emailHint.style.display = "none";
+    if (passwordHint) passwordHint.style.display = "none";
   } else {
     if (loginTab) loginTab.classList.remove("active");
     if (regTab) regTab.classList.add("active");
     if (nameGroup) nameGroup.style.display = "block";
     if (submitBtn) submitBtn.textContent = "Create Account";
+    if (emailLabel) emailLabel.textContent = "Work or Personal Email";
+    if (emailInput) emailInput.placeholder = "analyst@enterprise.com";
+    if (passwordInput) passwordInput.placeholder = "Min 8 chars, 1 uppercase, 1 number, 1 symbol";
+    if (emailHint) emailHint.style.display = "block";
+    if (passwordHint) passwordHint.style.display = "block";
   }
 }
 
@@ -394,6 +503,53 @@ async function handleAuthSubmit(e) {
   if (errBanner) {
     errBanner.textContent = "";
     errBanner.style.display = "none";
+  }
+
+  // Pre-flight regulations validation for registration
+  if (currentAuthTab === "register") {
+    const emailRegex = /^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9_.-]+\.[a-zA-Z0-9-.]+$/;
+    if (!emailRegex.test(email)) {
+      if (errBanner) {
+        errBanner.textContent = "Please provide a valid corporate or personal email address with domain (e.g. user@enterprise.com).";
+        errBanner.style.display = "block";
+      }
+      return;
+    }
+    if (password.length < 8) {
+      if (errBanner) {
+        errBanner.textContent = "Password must be at least 8 characters long.";
+        errBanner.style.display = "block";
+      }
+      return;
+    }
+    if (!/[A-Z]/.test(password)) {
+      if (errBanner) {
+        errBanner.textContent = "Password must contain at least one uppercase letter (A-Z).";
+        errBanner.style.display = "block";
+      }
+      return;
+    }
+    if (!/[a-z]/.test(password)) {
+      if (errBanner) {
+        errBanner.textContent = "Password must contain at least one lowercase letter (a-z).";
+        errBanner.style.display = "block";
+      }
+      return;
+    }
+    if (!/[0-9]/.test(password)) {
+      if (errBanner) {
+        errBanner.textContent = "Password must contain at least one numeric digit (0-9).";
+        errBanner.style.display = "block";
+      }
+      return;
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`"]/.test(password)) {
+      if (errBanner) {
+        errBanner.textContent = "Password must contain at least one special character or symbol (!@#$%^&*).";
+        errBanner.style.display = "block";
+      }
+      return;
+    }
   }
 
   try {
@@ -418,7 +574,10 @@ async function handleAuthSubmit(e) {
       if (typeof data.detail === "string") {
         msg = data.detail;
       } else if (Array.isArray(data.detail)) {
-        msg = data.detail.map(d => (typeof d === "string" ? d : (d.msg || JSON.stringify(d)))).join("; ");
+        msg = data.detail.map(d => {
+          const raw = typeof d === "string" ? d : (d.msg || JSON.stringify(d));
+          return raw.replace(/^Value error,\s*/i, "");
+        }).join("; ");
       } else if (data.error && data.error.message) {
         msg = data.error.message;
       }
@@ -2452,6 +2611,26 @@ async function loadAuditLedger() {
     }
 
     let html = "";
+    if (!currentUser) {
+      html += `
+        <div class="audit-guest-notice">
+          <div class="audit-guest-notice-header">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span>SOC 2 Governance Ledger Locked in Guest Mode</span>
+          </div>
+          <p class="audit-guest-notice-desc">
+            You are viewing anonymized query execution replays. Sign in to unlock the trigger-enforced immutable audit ledger with cryptographic event hashes, actor identity attribution, and multi-tenant compliance trails.
+          </p>
+          <button type="button" class="btn btn-primary btn-sm" onclick="closeAuditModal(); openAuthModal();">
+            Sign In to Access Governance Ledger
+          </button>
+        </div>
+      `;
+    }
+
     if (auditEvents.length > 0) {
       html += `
         <div style="margin-bottom:12px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted);">
