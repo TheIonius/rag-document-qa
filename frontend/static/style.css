@@ -3246,6 +3246,11 @@ kbd {
   display: none !important;
 }
 
+.auth-modal-dialog.logged-in #sso-container {
+  display: none !important;
+}
+
+
 .auth-modal-form-col {
   padding: var(--space-xl);
   border-right: 1px solid var(--border-light);

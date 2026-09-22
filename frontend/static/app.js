@@ -331,6 +331,7 @@ function updateUserAuthUI() {
   const modalTag = document.querySelector("#auth-modal .sheet-tag");
   const modalTitle = document.getElementById("auth-modal-title");
   const perksCol = document.querySelector(".auth-modal-perks-col");
+  const ssoContainer = document.getElementById("sso-container");
 
   if (currentUser) {
     if (displayBtn) displayBtn.textContent = currentUser.full_name || currentUser.email;
@@ -339,6 +340,7 @@ function updateUserAuthUI() {
     if (modalTag) modalTag.textContent = "Active Session";
     if (modalTitle) modalTitle.textContent = "Account Profile & Workspace";
     if (perksCol) perksCol.style.display = "none";
+    if (ssoContainer) ssoContainer.style.display = "none";
     if (profileSection) profileSection.style.display = "block";
     if (authForm) authForm.style.display = "none";
     if (authTabsRow) authTabsRow.style.display = "none";
@@ -401,6 +403,7 @@ function updateUserAuthUI() {
     if (profileSection) profileSection.style.display = "none";
     if (authForm) authForm.style.display = "block";
     if (authTabsRow) authTabsRow.style.display = "flex";
+    if (ssoContainer) ssoContainer.style.display = "block";
     if (envBadge) {
       envBadge.className = "env-badge guest-mode";
       envBadge.textContent = "Guest Sandbox";
