@@ -497,4 +497,16 @@ def test_workspace_members_collaboration_lifecycle(client):
     denied_res = client.get(f"/api/v1/workspaces/{ws_id}/members", headers=teammate_headers)
     assert denied_res.status_code == 403
 
+    # 7. Owner invites a new colleague who hasn't registered yet -> auto-provisions and assigns directly to colleague
+    auto_invite_res = client.post(
+        f"/api/v1/workspaces/{ws_id}/members",
+        json={"email": "analyst_fresh@enterprise.com", "role": "editor"},
+        headers=owner_headers
+    )
+    assert auto_invite_res.status_code == 201
+    fresh_data = auto_invite_res.json()
+    assert fresh_data["email"] == "analyst_fresh@enterprise.com"
+    assert fresh_data["full_name"] == "Analyst Fresh"
+    assert fresh_data["role"] == "editor"
+
 

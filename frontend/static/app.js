@@ -295,10 +295,18 @@ function updateUserAuthUI() {
   const envBadge = document.getElementById("env-badge") || document.querySelector(".env-badge");
   const uploadSub = document.querySelector(".upload-compact-sub");
   const uploadZone = document.getElementById("upload-zone");
+  const modalDialog = document.querySelector(".auth-modal-dialog");
+  const modalTag = document.querySelector("#auth-modal .sheet-tag");
+  const modalTitle = document.getElementById("auth-modal-title");
+  const perksCol = document.querySelector(".auth-modal-perks-col");
 
   if (currentUser) {
     if (displayBtn) displayBtn.textContent = currentUser.full_name || currentUser.email;
     updateUserRoleBadge();
+    if (modalDialog) modalDialog.classList.add("logged-in");
+    if (modalTag) modalTag.textContent = "Active Session";
+    if (modalTitle) modalTitle.textContent = "Account Profile & Workspace";
+    if (perksCol) perksCol.style.display = "none";
     if (profileSection) profileSection.style.display = "block";
     if (authForm) authForm.style.display = "none";
     if (authTabsRow) authTabsRow.style.display = "none";
@@ -318,18 +326,46 @@ function updateUserAuthUI() {
     const pEmail = document.getElementById("profile-email");
     const pAvatar = document.getElementById("profile-avatar");
 
-    if (pName) pName.textContent = currentUser.full_name;
+    if (pName) pName.textContent = currentUser.full_name || currentUser.email;
     if (pEmail) pEmail.textContent = currentUser.email;
     if (pAvatar) {
       const initials = currentUser.full_name
-        ? currentUser.full_name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
-        : "US";
+        ? currentUser.full_name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2)
+        : (currentUser.email ? currentUser.email.slice(0, 2).toUpperCase() : "US");
       pAvatar.textContent = initials;
+    }
+
+    // Populate active workspace details in profile
+    const activeWs = (userWorkspacesList || []).find(w => w.id === currentWorkspaceId);
+    const pWsName = document.getElementById("profile-workspace-name");
+    const pWsRole = document.getElementById("profile-workspace-role");
+    const pWsDocs = document.getElementById("profile-workspace-docs");
+    const btnProfileManage = document.getElementById("btn-profile-manage-team");
+
+    if (pWsName) {
+      pWsName.textContent = activeWs ? activeWs.name : (currentWorkspaceId === "ws_default" ? "Demo Sandbox (Shared)" : "Default Workspace");
+    }
+    if (pWsRole) {
+      pWsRole.textContent = currentUser.is_superuser
+        ? "Superuser"
+        : (activeWs?.role ? activeWs.role.charAt(0).toUpperCase() + activeWs.role.slice(1) : "Member");
+    }
+    if (pWsDocs) {
+      const docCount = (typeof allIndexedDocs !== "undefined" && Array.isArray(allIndexedDocs)) ? allIndexedDocs.length : 0;
+      pWsDocs.textContent = `${docCount} ${docCount === 1 ? 'document' : 'documents'}`;
+    }
+    if (btnProfileManage) {
+      const canManage = currentUser.is_superuser || (activeWs && (activeWs.role === "owner" || activeWs.role === "admin"));
+      btnProfileManage.style.display = (canManage && currentWorkspaceId !== "ws_default") ? "inline-flex" : "none";
     }
   } else {
     if (displayBtn) displayBtn.textContent = "Sign In";
     const userRoleBadge = document.getElementById("user-role-badge");
     if (userRoleBadge) userRoleBadge.style.display = "none";
+    if (modalDialog) modalDialog.classList.remove("logged-in");
+    if (modalTag) modalTag.textContent = "Access Governance";
+    if (modalTitle) modalTitle.textContent = "Account Authentication & Multi-Tenancy";
+    if (perksCol) perksCol.style.display = "flex";
     if (profileSection) profileSection.style.display = "none";
     if (authForm) authForm.style.display = "block";
     if (authTabsRow) authTabsRow.style.display = "flex";
@@ -413,6 +449,7 @@ function changeActiveWorkspace(wsId) {
   currentWorkspaceId = wsId;
   localStorage.setItem("cortex_workspace_id", wsId);
   updateUserRoleBadge();
+  updateUserAuthUI();
   const btnManageMembers = document.getElementById("btn-manage-members");
   if (btnManageMembers) {
     if (currentUser && wsId && wsId !== "ws_default") {
@@ -767,51 +804,10 @@ async function handleRemoveWorkspaceMember(memberId, memberName) {
   }
 }
 
-async function quickRegisterDemoUser() {
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  const email = `analyst_${rand}@enterprise.local`;
-  const password = "demoPassword123!";
-  const fullName = `Analyst ${rand}`;
-  const btn = document.getElementById("btn-quick-demo-account");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "Provisioning Tenant Account...";
-  }
-
-  try {
-    const res = await fetch("/api/v1/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, full_name: fullName })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Registration failed");
-
-    localStorage.setItem("cortex_auth_token", data.access_token);
-    currentUser = data.user;
-    startNewInvestigation();
-    updateUserAuthUI();
-    await loadWorkspaces();
-    loadDocuments();
-    loadThreads();
-    closeAuthModal();
-  } catch (err) {
-    const errBanner = document.getElementById("auth-error-banner");
-    if (errBanner) {
-      errBanner.textContent = err.message || "Failed to create demo account";
-      errBanner.style.display = "block";
-    }
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "Create Instant Demo Account";
-    }
-  }
-}
-
 function openAuthModal() {
   const modal = document.getElementById("auth-modal");
   if (modal) {
+    updateUserAuthUI();
     modal.style.display = "flex";
     const errBanner = document.getElementById("auth-error-banner");
     if (errBanner) errBanner.style.display = "none";
@@ -2198,6 +2194,12 @@ async function openSplitReader(docId, highlightChunkId, citationIndex) {
 
   if (!pane) return;
 
+  // Toggle behavior: clicking the same document in sidebar when reader is open closes it
+  if (!highlightChunkId && !citationIndex && pane.style.display !== "none" && activeSplitReaderDoc === docId) {
+    closeSplitReader();
+    return;
+  }
+
   if (window.innerWidth <= 960) {
     toggleSidebar(false);
   }
@@ -2205,6 +2207,11 @@ async function openSplitReader(docId, highlightChunkId, citationIndex) {
   pane.style.display = "flex";
   activeSplitReaderDoc = docId;
   currentHighlightedChunkId = highlightChunkId;
+
+  // Update active highlight on document items in the sidebar
+  document.querySelectorAll(".collection-doc-item").forEach(el => {
+    el.classList.toggle("active", el.getAttribute("onclick")?.includes(`'${docId}'`));
+  });
 
   if (titleEl) titleEl.textContent = "Loading source document...";
   if (bodyEl) {
@@ -2328,6 +2335,7 @@ function closeSplitReader() {
   activeSplitReaderDoc = null;
   currentHighlightedChunkId = null;
   currentPdfDoc = null;
+  document.querySelectorAll(".collection-doc-item").forEach(el => el.classList.remove("active"));
 }
 
 // Sidebar navigation

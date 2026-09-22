@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +13,7 @@ from app.models.schemas import (
 from app.security.auth import (
     get_current_user,
     get_optional_user,
+    hash_password,
     require_role
 )
 
@@ -164,7 +166,15 @@ def add_workspace_member(
     with get_db() as conn:
         user_row = conn.execute("SELECT id, email, full_name FROM users WHERE email = ?", (email,)).fetchone()
         if not user_row:
-            raise HTTPException(status_code=404, detail="User with this email not found. They must register first.")
+            # Auto-provision the invited colleague account so they can be assigned immediately
+            new_user_id = f"usr_{uuid.uuid4().hex[:12]}"
+            colleague_name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            temp_hashed = hash_password(secrets.token_urlsafe(16))
+            conn.execute("""
+                INSERT INTO users (id, email, hashed_password, full_name, is_active, is_superuser, created_at)
+                VALUES (?, ?, ?, ?, 1, 0, ?)
+            """, (new_user_id, email, temp_hashed, colleague_name, now))
+            user_row = {"id": new_user_id, "email": email, "full_name": colleague_name}
 
         user_id = user_row["id"]
         existing = conn.execute("""

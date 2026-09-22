@@ -637,6 +637,16 @@ body {
   border-color: var(--border-medium);
 }
 
+.collection-doc-item.active {
+  background: var(--accent-blue-subtle);
+  border-color: var(--accent-blue-border);
+}
+
+.collection-doc-item.active .collection-doc-name {
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
 .collection-doc-name {
   font-size: var(--text-sm);
   font-weight: 500;
@@ -2969,12 +2979,31 @@ kbd {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: max-width var(--anim-speed);
+}
+
+.auth-modal-dialog.logged-in {
+  max-width: 480px;
 }
 
 .auth-modal-split-body {
   display: grid;
   grid-template-columns: 1fr 1.15fr;
   min-height: 420px;
+}
+
+.auth-modal-dialog.logged-in .auth-modal-split-body {
+  grid-template-columns: 1fr;
+  min-height: auto;
+}
+
+.auth-modal-dialog.logged-in .auth-modal-form-col {
+  border-right: none;
+  padding: var(--space-xl);
+}
+
+.auth-modal-dialog.logged-in .auth-modal-perks-col {
+  display: none !important;
 }
 
 .auth-modal-form-col {
@@ -3162,6 +3191,21 @@ kbd {
   margin-top: var(--space-sm);
 }
 
+.user-profile-card {
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+
+.user-profile-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
 .user-profile-info {
   display: flex;
   align-items: center;
@@ -3209,6 +3253,52 @@ kbd {
   letter-spacing: 0.05em;
   background: var(--accent-blue-subtle);
   color: var(--accent-blue);
+}
+
+.profile-meta-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-light);
+}
+
+.profile-meta-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--text-xs);
+}
+
+.profile-meta-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.profile-meta-val {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.profile-actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.profile-actions-stack .btn-block {
+  margin-top: 0;
+}
+
+.profile-signout-btn {
+  color: #dc2626;
+  border-color: var(--border-light);
+}
+
+.profile-signout-btn:hover {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
 }
 
 .feedback-submitted-pill {

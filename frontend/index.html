@@ -519,15 +519,39 @@
             </form>
 
             <div id="user-profile-section" style="display:none;">
-              <div class="user-profile-info">
-                <div class="profile-avatar" id="profile-avatar">EA</div>
-                <div class="profile-details">
-                  <div id="profile-name" class="profile-name">Enterprise Administrator</div>
-                  <div id="profile-email" class="profile-email">admin@enterprise.local</div>
-                  <div id="profile-role" class="profile-role-badge">Member</div>
+              <div class="user-profile-card">
+                <div class="user-profile-header">
+                  <div class="profile-avatar" id="profile-avatar">EA</div>
+                  <div class="profile-details">
+                    <div id="profile-name" class="profile-name">Enterprise Administrator</div>
+                    <div id="profile-email" class="profile-email">admin@enterprise.local</div>
+                    <div id="profile-role" class="profile-role-badge">Member</div>
+                  </div>
+                </div>
+                <div class="profile-meta-grid">
+                  <div class="profile-meta-item">
+                    <span class="profile-meta-label">Active Workspace</span>
+                    <span class="profile-meta-val" id="profile-workspace-name">Default Workspace</span>
+                  </div>
+                  <div class="profile-meta-item">
+                    <span class="profile-meta-label">Partition Role</span>
+                    <span class="profile-meta-val" id="profile-workspace-role">Member</span>
+                  </div>
+                  <div class="profile-meta-item">
+                    <span class="profile-meta-label">Indexed Documents</span>
+                    <span class="profile-meta-val" id="profile-workspace-docs">0 documents</span>
+                  </div>
                 </div>
               </div>
-              <button type="button" class="btn btn-secondary btn-block" onclick="handleSignOut()">Sign Out</button>
+
+              <div class="profile-actions-stack">
+                <button type="button" id="btn-profile-manage-team" class="btn btn-secondary btn-block" onclick="closeAuthModal(); openMembersModal();" style="display:none;">
+                  Manage Workspace Team
+                </button>
+                <button type="button" class="btn btn-secondary btn-block profile-signout-btn" onclick="handleSignOut()">
+                  Sign Out
+                </button>
+              </div>
             </div>
           </div>
 
@@ -551,14 +575,6 @@
                 <div class="auth-perk-title">SOC 2 Audit Ledger</div>
                 <div class="auth-perk-desc">Trigger-enforced immutable execution logs with cryptographic actor identity tracking.</div>
               </div>
-            </div>
-
-            <div class="auth-quick-eval-card">
-              <div class="auth-quick-eval-title">Quick Evaluation (1-Click)</div>
-              <p class="auth-quick-eval-desc">Instantly provision an ephemeral enterprise tenant account to experience authenticated permissions.</p>
-              <button type="button" id="btn-quick-demo-account" class="btn btn-secondary btn-block" onclick="quickRegisterDemoUser()">
-                Create Instant Demo Account
-              </button>
             </div>
           </div>
         </div>
