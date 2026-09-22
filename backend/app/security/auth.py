@@ -85,6 +85,19 @@ def get_optional_user(
     except HTTPException:
         return None
 
+def get_user_from_token(token: Optional[str]) -> Optional[dict]:
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        return get_current_user_from_db(user_id)
+    except Exception:
+        return None
+
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:

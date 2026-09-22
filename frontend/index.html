@@ -517,6 +517,26 @@
               </div>
             </form>
 
+            <div id="sso-container">
+              <div class="sso-divider">
+                <span>or continue with enterprise SSO</span>
+              </div>
+              <div class="sso-button-group">
+                <button type="button" class="btn-sso" onclick="handleSSOLogin('okta')" title="Authenticate via Okta Workforce Identity">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+                  <span>Okta</span>
+                </button>
+                <button type="button" class="btn-sso" onclick="handleSSOLogin('google')" title="Authenticate via Google Workspace OIDC">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+                  <span>Google</span>
+                </button>
+                <button type="button" class="btn-sso" onclick="handleSSOLogin('azure_ad')" title="Authenticate via Microsoft Entra ID">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
+                  <span>Entra</span>
+                </button>
+              </div>
+            </div>
+
             <div id="user-profile-section" style="display:none;">
               <div class="user-profile-card">
                 <div class="user-profile-header">

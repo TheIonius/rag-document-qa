@@ -10,9 +10,12 @@ from app.database import init_db, get_db
 from app.routers import documents, query, evaluation, threads, auth, workspaces, audit
 from app.routers.documents import refresh_index_from_db
 from app.security.ratelimit import RateLimitMiddleware
+from app.services.event_bus import workspace_event_bus
+import asyncio
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    workspace_event_bus.set_loop(asyncio.get_running_loop())
     init_db()
     with get_db() as conn:
         count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]

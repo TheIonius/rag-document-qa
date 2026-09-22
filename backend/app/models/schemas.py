@@ -354,3 +354,20 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+class SSOProviderResponse(BaseModel):
+    id: str
+    name: str
+    protocol: str = "OIDC"
+    auth_url: str
+    client_id: Optional[str] = None
+    enabled: bool = True
+
+class SSOCallbackRequest(BaseModel):
+    provider: str
+    code: Optional[str] = None
+    id_token: Optional[str] = None
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    provider_user_id: Optional[str] = None
+

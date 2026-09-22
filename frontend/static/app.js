@@ -20,6 +20,37 @@ let retrievalConfig = {
   multiHop: false
 };
 
+let workspaceEvents = null;
+
+async function initRealtimeEvents() {
+  try {
+    const mod = await import("./modules/events.js");
+    workspaceEvents = mod.workspaceEvents;
+
+    workspaceEvents.on("document_indexed", (payload) => {
+      loadDocuments();
+    });
+
+    workspaceEvents.on("document_deleted", (payload) => {
+      loadDocuments();
+    });
+
+    workspaceEvents.on("member_added", (payload) => {
+      loadWorkspaceMembers();
+      loadWorkspaces();
+    });
+
+    workspaceEvents.on("member_removed", (payload) => {
+      loadWorkspaceMembers();
+      loadWorkspaces();
+    });
+
+    workspaceEvents.connect(currentWorkspaceId);
+  } catch (err) {
+    console.warn("Real-time SSE event bus unavailable:", err);
+  }
+}
+
 async function apiFetch(endpoint, options = {}) {
   const token = localStorage.getItem("cortex_auth_token");
   const headers = options.headers ? { ...options.headers } : {};
@@ -52,6 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadDocuments();
   loadThreads();
   updateHistoryBadge();
+  initRealtimeEvents();
 });
 
 // Event listeners
@@ -463,6 +495,9 @@ function changeActiveWorkspace(wsId) {
   loadDocuments();
   loadThreads();
   updateHistoryBadge();
+  if (workspaceEvents) {
+    workspaceEvents.connect(wsId);
+  }
 }
 
 function openCreateWorkspaceModal() {
@@ -970,6 +1005,9 @@ async function handleAuthSubmit(e) {
     loadDocuments();
     loadThreads();
     closeAuthModal();
+    if (workspaceEvents) {
+      workspaceEvents.connect(currentWorkspaceId);
+    }
   } catch (err) {
     if (errBanner) {
       errBanner.textContent = err.message || "Network error. Please try again.";
@@ -977,6 +1015,50 @@ async function handleAuthSubmit(e) {
     }
   }
 }
+
+async function handleSSOLogin(providerId) {
+  const errBanner = document.getElementById("auth-error-banner");
+  if (errBanner) {
+    errBanner.textContent = "";
+    errBanner.style.display = "none";
+  }
+
+  try {
+    const ssoModule = await import("./modules/sso.js");
+    const sampleEmail = `analyst@${providerId}.enterprise.corp`;
+    const providerNames = {
+      okta: "Okta Workforce",
+      google: "Google Workspace",
+      azure_ad: "Microsoft Entra ID"
+    };
+    const displayName = `${providerNames[providerId] || "Enterprise"} Analyst`;
+
+    const data = await ssoModule.executeSSOCallback({
+      provider: providerId,
+      email: sampleEmail,
+      full_name: displayName,
+      provider_user_id: `${providerId}-usr-${Date.now().toString(36)}`
+    });
+
+    currentUser = data.user;
+    startNewInvestigation();
+    updateUserAuthUI();
+    await loadWorkspaces();
+    loadDocuments();
+    loadThreads();
+    closeAuthModal();
+
+    if (workspaceEvents) {
+      workspaceEvents.connect(currentWorkspaceId);
+    }
+  } catch (err) {
+    if (errBanner) {
+      errBanner.textContent = err.message || "SSO authentication error.";
+      errBanner.style.display = "block";
+    }
+  }
+}
+window.handleSSOLogin = handleSSOLogin;
 
 function handleSignOut() {
   localStorage.removeItem("cortex_auth_token");
@@ -996,6 +1078,9 @@ function handleSignOut() {
   loadDocuments();
   loadThreads();
   updateHistoryBadge();
+  if (workspaceEvents) {
+    workspaceEvents.connect("ws_default");
+  }
 }
 
 async function sendFeedback(btn, isPositive, queryLogId) {

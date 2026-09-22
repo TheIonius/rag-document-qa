@@ -24,6 +24,7 @@ from app.services.document_parser import parse_document_content
 from app.services.chunker import chunk_document
 from app.services.storage import storage_service
 from app.services.vector_engine import IndexedChunk, search_engine
+from app.services.event_bus import workspace_event_bus
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -354,6 +355,18 @@ def process_background_ingestion(
             details={"filename": parsed.filename, "chunks_count": len(chunks), "version": version}
         )
         refresh_index_from_db()
+        workspace_event_bus.publish_sync(
+            active_ws,
+            "document_indexed",
+            {
+                "document_id": doc_id,
+                "filename": parsed.filename,
+                "title": parsed.title,
+                "chunk_count": len(chunks),
+                "status": "READY",
+                "workspace_id": active_ws
+            }
+        )
         try:
             from app.services.synthetic_qa import generate_synthetic_qa_pairs
             generate_synthetic_qa_pairs(doc_id, parsed.title, chunks, active_ws)
@@ -395,9 +408,9 @@ async def upload_document(
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Editor or Admin role required to upload documents.")
 
     filename = file.filename
-    allowed_exts = (".pdf", ".md", ".markdown", ".txt", ".csv", ".tsv")
+    allowed_exts = (".pdf", ".md", ".markdown", ".txt", ".csv", ".tsv", ".docx", ".xlsx", ".xls", ".pptx", ".ppt")
     if not any(filename.lower().endswith(ext) for ext in allowed_exts):
-        raise HTTPException(status_code=400, detail="Supported formats: .pdf, .md, .txt, .csv, and .tsv.")
+        raise HTTPException(status_code=400, detail="Supported formats: .pdf, .md, .txt, .csv, .tsv, .docx, .xlsx, and .pptx.")
 
     content = await file.read(settings.max_upload_size_bytes + 1)
     if len(content) > settings.max_upload_size_bytes:
@@ -542,6 +555,18 @@ async def upload_document(
     )
 
     refresh_index_from_db()
+    workspace_event_bus.publish_sync(
+        active_ws,
+        "document_indexed",
+        {
+            "document_id": doc_id,
+            "filename": parsed.filename,
+            "title": parsed.title,
+            "chunk_count": len(chunks),
+            "status": "READY",
+            "workspace_id": active_ws
+        }
+    )
     try:
         from app.services.synthetic_qa import generate_synthetic_qa_pairs
         generate_synthetic_qa_pairs(doc_id, parsed.title, chunks, active_ws)
@@ -627,6 +652,14 @@ def delete_document(document_id: str, user: Optional[dict] = Depends(get_optiona
     )
 
     refresh_index_from_db()
+    workspace_event_bus.publish_sync(
+        workspace_id,
+        "document_deleted",
+        {
+            "document_id": document_id,
+            "workspace_id": workspace_id
+        }
+    )
     return {"status": "success", "deleted_document_id": document_id}
 
 def refresh_index_from_db():

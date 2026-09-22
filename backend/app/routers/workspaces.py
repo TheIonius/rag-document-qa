@@ -1,7 +1,9 @@
 import secrets
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 
 from app.database import get_db, record_audit_event, utc_now_iso
 from app.models.schemas import (
@@ -13,9 +15,12 @@ from app.models.schemas import (
 from app.security.auth import (
     get_current_user,
     get_optional_user,
+    get_user_from_token,
     hash_password,
-    require_role
+    require_role,
+    security
 )
+from app.services.event_bus import workspace_event_bus
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -199,6 +204,19 @@ def add_workspace_member(
         details={"member_email": email, "role": req.role}
     )
 
+    workspace_event_bus.publish_sync(
+        workspace_id,
+        "member_added",
+        {
+            "member_id": mem_id,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "email": user_row["email"],
+            "full_name": user_row["full_name"],
+            "role": req.role
+        }
+    )
+
     return WorkspaceMemberResponse(
         id=mem_id,
         user_id=user_id,
@@ -237,5 +255,64 @@ def remove_workspace_member(
         actor_email=caller_user.get("email"),
         details={"removed_member_id": member_id}
     )
+
+    workspace_event_bus.publish_sync(
+        workspace_id,
+        "member_removed",
+        {
+            "member_id": member_id,
+            "workspace_id": workspace_id
+        }
+    )
+
     return {"status": "success", "message": "Member successfully removed from workspace."}
+
+
+@router.get("/{workspace_id}/events")
+async def workspace_events_stream(
+    workspace_id: str,
+    token: Optional[str] = Query(None),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+):
+    """
+    Real-time Server-Sent Events (SSE) stream for workspace synchronization.
+    Broadcasts indexing completions, team updates, and active collaboration events.
+    """
+    user = None
+    if token:
+        user = get_user_from_token(token)
+    elif credentials and credentials.credentials:
+        user = get_user_from_token(credentials.credentials)
+
+    # Allow access if default sandbox or authenticated member
+    if workspace_id != "ws_default":
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to stream workspace events.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not user.get("is_superuser"):
+            with get_db() as conn:
+                mem = conn.execute(
+                    "SELECT id FROM workspace_memberships WHERE workspace_id = ? AND user_id = ?",
+                    (workspace_id, user["id"])
+                ).fetchone()
+                if not mem:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied to this workspace events stream."
+                    )
+
+    queue = await workspace_event_bus.subscribe(workspace_id)
+    return StreamingResponse(
+        workspace_event_bus.sse_generator(workspace_id, queue),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
 
