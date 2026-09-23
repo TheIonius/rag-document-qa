@@ -1825,7 +1825,7 @@ function createAssistantMessageElement(answerText, citations, meta, timestamp) {
             <button type="button" class="cite-source-pill" onclick="openSplitReader('${c.document_id}', '${c.chunk_id}', ${c.citation_index})" title="Inspect chunk in context inside Split Document Reader">
               <span style="font-weight:700; color:var(--accent-blue);">[${c.citation_index}]</span>
               <span>${escapeHtml(c.document_title)}</span>
-              ${c.section_title ? `<span style="color:var(--text-muted);">&bull; ${escapeHtml(c.section_title)}</span>` : ''}
+              ${(c.section_title && c.document_title && c.section_title.trim().toLowerCase() !== c.document_title.trim().toLowerCase()) ? `<span style="color:var(--text-muted);">&bull; ${escapeHtml(c.section_title)}</span>` : ''}
             </button>
           `).join("")}
         </div>
@@ -1883,7 +1883,7 @@ function formatSynthesizedAnswer(rawAnswer, citations) {
                 <polyline points="14 2 14 8 20 8"/>
               </svg>
               <span class="evidence-doc-title">${escapeHtml(item.docTitle)}</span>
-              ${item.sectionTitle ? `<span class="evidence-section-tag">${escapeHtml(item.sectionTitle)}</span>` : ''}
+              ${(item.sectionTitle && item.docTitle && item.sectionTitle.trim().toLowerCase() !== item.docTitle.trim().toLowerCase()) ? `<span class="evidence-section-tag">${escapeHtml(item.sectionTitle)}</span>` : ''}
             </div>
             <button type="button" class="citation-pill-btn" onclick="openSplitReader('${docId}', '${chunkId}', ${item.citationIndex})" title="Open native document sheet and inspect Citation [${item.citationIndex}] in context">
               <span>View Source [${item.citationIndex}]</span>
@@ -2339,8 +2339,25 @@ async function openSplitReader(docId, highlightChunkId, citationIndex) {
 
     // Determine target section and page
     const targetChunk = chunks.find(c => c.id === highlightChunkId);
+    const isRedundantSec = targetChunk && targetChunk.section_title && doc.title &&
+      targetChunk.section_title.trim().toLowerCase() === doc.title.trim().toLowerCase();
+    const distinctSectionTitle = (!isRedundantSec && targetChunk?.section_title) ? targetChunk.section_title : null;
+
     if (secName) {
-      secName.textContent = targetChunk ? `Section: ${targetChunk.section_title || 'General'}` : "";
+      if (distinctSectionTitle) {
+        secName.textContent = `Section: ${distinctSectionTitle}`;
+        secName.style.display = "inline";
+      } else if (targetChunk && targetChunk.page_number) {
+        secName.textContent = `Page ${targetChunk.page_number}`;
+        secName.style.display = "inline";
+      } else {
+        secName.textContent = "";
+        secName.style.display = "none";
+      }
+    }
+    const metaDot = document.querySelector("#reader-meta-row .meta-dot");
+    if (metaDot) {
+      metaDot.style.display = (citationIndex && (distinctSectionTitle || targetChunk?.page_number)) ? "inline" : "none";
     }
     const targetPage = targetChunk ? targetChunk.page_number : 1;
     currentPdfPage = targetPage;
@@ -2349,8 +2366,9 @@ async function openSplitReader(docId, highlightChunkId, citationIndex) {
     if (jumpPillsEl) {
       jumpPillsEl.innerHTML = chunks.map((c, i) => {
         const isTarget = c.id === highlightChunkId;
+        const pillSec = (c.section_title && doc.title && c.section_title.trim().toLowerCase() !== doc.title.trim().toLowerCase()) ? c.section_title : `Partition ${c.chunk_index + 1}`;
         return `
-          <button type="button" class="reader-jump-pill ${isTarget ? 'active' : ''}" onclick="jumpToChunkInReader('${c.id}')" title="Partition #${c.chunk_index}: ${escapeHtml(c.section_title || 'General')}">
+          <button type="button" class="reader-jump-pill ${isTarget ? 'active' : ''}" onclick="jumpToChunkInReader('${c.id}')" title="Partition #${c.chunk_index + 1}: ${escapeHtml(pillSec)}">
             <span>Chunk ${c.chunk_index + 1}</span>
           </button>
         `;
@@ -2361,10 +2379,13 @@ async function openSplitReader(docId, highlightChunkId, citationIndex) {
     if (bodyEl) {
       bodyEl.innerHTML = chunks.map(c => {
         const isTarget = c.id === highlightChunkId;
+        const isRedundant = c.section_title && doc.title &&
+          c.section_title.trim().toLowerCase() === doc.title.trim().toLowerCase();
+        const secLabel = (!isRedundant && c.section_title) ? `${escapeHtml(c.section_title)} &bull; ` : '';
         return `
           <div id="reader-chunk-${c.id}" class="reader-chunk-block ${isTarget ? 'is-target' : ''}">
             <div class="reader-chunk-header">
-              <span>Partition #${c.chunk_index + 1} &bull; ${escapeHtml(c.section_title || 'Overview')} (Page ${c.page_number})</span>
+              <span>Partition #${c.chunk_index + 1} &bull; ${secLabel}Page ${c.page_number}</span>
               <span>${c.word_count} words</span>
             </div>
             <div class="reader-chunk-text">${escapeHtml(c.text)}</div>
@@ -2532,7 +2553,7 @@ function generateInvestigationReportHtml(threadTitle, messages, workspaceName, u
                     </td>
                     <td>
                       <div class="source-doc-title">${escapeHtml(c.document_title)}</div>
-                      <div class="source-doc-meta">${escapeHtml(c.section_title || 'General')} &bull; Page ${c.page_number || 1}</div>
+                      <div class="source-doc-meta">${(c.section_title && c.document_title && c.section_title.trim().toLowerCase() !== c.document_title.trim().toLowerCase()) ? escapeHtml(c.section_title) + ' &bull; ' : ''}Page ${c.page_number || 1}</div>
                     </td>
                     <td style="text-align: center;">
                       <span class="status-pill status-${c.verification_status === 'verified' ? 'verified' : 'partial'}">

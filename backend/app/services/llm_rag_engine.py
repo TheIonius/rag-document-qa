@@ -113,7 +113,10 @@ async def generate_rag_answer(
         else:
             context_text = chunk.text
 
-        header = f"[{idx}] Document: {chunk.document_title} | Section: {chunk.section_title or 'General'} | Page: {chunk.page_number}"
+        sec_title = chunk.section_title
+        if sec_title and chunk.document_title and sec_title.strip().lower() == chunk.document_title.strip().lower():
+            sec_title = None
+        header = f"[{idx}] Document: {chunk.document_title} | Section: {sec_title or 'General'} | Page: {chunk.page_number}"
         context_blocks.append(f"{header}\n{sanitize_document_context(context_text)}")
 
     full_context_str = "\n\n---\n\n".join(context_blocks)
@@ -644,7 +647,11 @@ def build_deterministic_rag_answer(
             continue
         seen_quotes.add(norm_ex)
 
-        sec_label = f" in {chunk.section_title}" if chunk.section_title else ""
+        sec_title = chunk.section_title
+        if sec_title and chunk.document_title and sec_title.strip().lower() == chunk.document_title.strip().lower():
+            sec_title = None
+
+        sec_label = f" in {sec_title}" if sec_title else ""
         answer_paragraphs.append(f"According to **{chunk.document_title}**{sec_label} [{idx}]:\n\n\"{excerpt}\"")
 
         status, v_score = verify_citation(excerpt, chunk.text)
@@ -652,7 +659,7 @@ def build_deterministic_rag_answer(
             citation_index=idx,
             document_id=chunk.document_id,
             document_title=chunk.document_title,
-            section_title=chunk.section_title,
+            section_title=sec_title,
             page_number=chunk.page_number,
             chunk_id=chunk.chunk_id,
             exact_quote=excerpt,

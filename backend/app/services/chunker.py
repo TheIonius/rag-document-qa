@@ -40,6 +40,10 @@ def chunk_document(
         current_offset = 0
 
         for sec_idx, (sec_title, sec_text) in enumerate(sections):
+            effective_sec_title = sec_title
+            if sec_title and parsed.title and sec_title.strip().lower() == parsed.title.strip().lower():
+                effective_sec_title = "Overview"
+
             sec_words = sec_text.split()
             parent_id = f"parent_sec_{sec_idx}"
             parent_full_text = sec_text.strip()
@@ -49,7 +53,7 @@ def chunk_document(
                     char_len = len(sec_text)
                     chunks.append(Chunk(
                         chunk_index=chunk_counter,
-                        section_title=sec_title,
+                        section_title=effective_sec_title,
                         page_number=1,
                         text=sec_text.strip(),
                         word_count=len(sec_words),
@@ -63,7 +67,7 @@ def chunk_document(
             else:
                 # Sub-chunk long section with sliding window, retaining parent reference
                 sub_chunks = sliding_window_chunk(
-                    sec_text, sec_title, 1, target_words, overlap_words, current_offset, chunk_counter,
+                    sec_text, effective_sec_title, 1, target_words, overlap_words, current_offset, chunk_counter,
                     parent_chunk_id=parent_id, parent_text=parent_full_text
                 )
                 chunks.extend(sub_chunks)
@@ -77,7 +81,9 @@ def chunk_document(
             if not page_text.strip():
                 continue
 
-            sec_title = extract_header_from_block(page_text)
+            sec_title = extract_header_from_block(page_text, doc_title=parsed.title)
+            if not sec_title or (parsed.title and sec_title.strip().lower() == parsed.title.strip().lower()):
+                sec_title = "Overview" if page_num == 1 else f"Page {page_num}"
             page_words = page_text.split()
             parent_id = f"parent_p{page_num}"
             parent_full_text = page_text.strip()
@@ -86,7 +92,7 @@ def chunk_document(
                 char_len = len(page_text)
                 chunks.append(Chunk(
                     chunk_index=chunk_counter,
-                    section_title=sec_title or f"Page {page_num}",
+                    section_title=sec_title,
                     page_number=page_num,
                     text=page_text.strip(),
                     word_count=len(page_words),
@@ -99,7 +105,7 @@ def chunk_document(
                 current_offset += char_len
             else:
                 sub_chunks = sliding_window_chunk(
-                    page_text, sec_title or f"Page {page_num}", page_num,
+                    page_text, sec_title, page_num,
                     target_words, overlap_words, current_offset, chunk_counter,
                     parent_chunk_id=parent_id, parent_text=parent_full_text
                 )
@@ -310,12 +316,24 @@ def sliding_window_chunk(
 
     return chunks
 
-def extract_header_from_block(text: str) -> Optional[str]:
+def extract_header_from_block(text: str, doc_title: Optional[str] = None) -> Optional[str]:
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    if lines:
-        first = lines[0]
-        if first.startswith("#"):
-            return re.sub(r"^#+\s*", "", first)
-        if len(first) < 50 and first.isupper():
-            return first
+    if not lines:
+        return None
+
+    norm_doc_title = doc_title.strip().lower() if doc_title else None
+
+    # Check for markdown headers first
+    for line in lines[:8]:
+        if line.startswith("#"):
+            candidate = re.sub(r"^#+\s*", "", line).strip()
+            if candidate and (not norm_doc_title or candidate.lower() != norm_doc_title):
+                return candidate
+
+    # Check for uppercase section headers that are distinct from the document title
+    for line in lines[:8]:
+        if len(line) < 60 and line.isupper() and any(c.isalpha() for c in line):
+            if not norm_doc_title or line.lower() != norm_doc_title:
+                return line
+
     return None
