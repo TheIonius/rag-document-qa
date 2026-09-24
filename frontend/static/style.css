@@ -1021,14 +1021,34 @@ body {
   text-align: left;
 }
 
+.starters-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
+}
+
 .starters-label {
   font-size: var(--text-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin-bottom: var(--space-sm);
-  display: block;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.4;
+}
+
+.starters-hint {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.4;
 }
 
 .starters-grid {
@@ -3154,21 +3174,6 @@ kbd {
   justify-content: flex-end;
   gap: var(--space-sm);
   margin-top: var(--space-sm);
-}
-
-/* Dynamic Starter Inquiries & Scope Styling */
-.starters-header-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: var(--space-xs);
-  flex-wrap: wrap;
-  gap: var(--space-2xs);
-}
-
-.starters-hint {
-  font-size: var(--text-2xs);
-  color: var(--text-muted);
 }
 
 .workspace-empty-docs-card {

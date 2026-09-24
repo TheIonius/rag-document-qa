@@ -1300,7 +1300,7 @@ function renderStarterInquiries(colName) {
   // Case 2: Documents exist in this workspace
   const docCount = allDocuments.length;
   if (hint) {
-    hint.textContent = `Derived from ${docCount} indexed workspace document${docCount === 1 ? '' : 's'}`;
+    hint.textContent = "Derived from active workspace documentation";
   }
 
   const relevantDocs = colName === "all"
@@ -1309,9 +1309,9 @@ function renderStarterInquiries(colName) {
 
   if (label) {
     if (colName === "all") {
-      label.textContent = "Suggested Research Inquiries (All Collections):";
+      label.textContent = "Suggested Research Inquiries:";
     } else {
-      label.textContent = `Suggested Research Inquiries: ${colName}`;
+      label.textContent = `Suggested Research Inquiries (${colName}):`;
     }
   }
 
